@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>DAR Rings — Single-Circle Control with Car</title>
+<style>
+  html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
+  header{
+    display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;
+    gap:.6rem .8rem;padding:.6rem .8rem;background:#12161d;border-bottom:1px solid #1f2530;
+  }
+  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 320px;min-width:0}
+  .sliderBlock{display:flex;flex-direction:column;gap:.25rem;flex:1 1 200px;min-width:140px}
+  .sliderBlock label{font-size:.9rem;opacity:.9}
+  .sliderBlock input[type=range]{flex:1;min-width:80px}
+  .sliderBlock .tag{margin-top:.1rem;align-self:center;white-space:nowrap}
+  .actions{display:flex;gap:.5rem;flex:0 0 auto}
+  button{border:1px solid #2a3342;background:#151b24;color:#e7ecf3;border-radius:10px;padding:.35rem .6rem;font-weight:600}
+  .toggle{border:1px solid #2a3342;background:#0f141c;border-radius:10px;display:flex;overflow:hidden}
+  .toggle button{border:0;padding:.35rem .6rem}
+  .toggle button[aria-pressed="true"]{background:#1a2230}
+
+  #scene{position:relative}
+  #hud{position:absolute;inset:auto 0 .8rem 0;display:flex;justify-content:center;gap:.6rem;pointer-events:none}
+  .hint{pointer-events:auto;background:#0f141c;border:1px solid #2a3342;padding:.35rem .55rem;border-radius:10px;font-size:.85rem}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <div class="sl">
+      <div class="sliderBlock">
+        <label for="morph">Morph (driven by stick)</label>
+        <input id="morph" type="range" min="0" max="1" step="0.001" value="0" disabled>
+        <span id="morphTag" class="tag">0.000</span>
+      </div>
+      <div class="sliderBlock">
+        <label for="alpha">End Cone</label>
+        <input id="alpha" type="range" min="5" max="60" step="1" value="28">
+        <span id="alphaTag" class="tag">28°</span>
+      </div>
+    </div>
+    <div class="actions">
+      <div class="toggle" role="toolbar" aria-label="DAR mode">
+        <button id="arl" type="button" aria-pressed="false" title="Analog Rotate Left (+90°)">ARL</button>
+        <button id="arr" type="button" aria-pressed="false" title="Analog Rotate Right (−180°)">ARR</button>
+      </div>
+      <button id="reset" type="button">Reset View</button>
+    </div>
+  </header>
+
+  <div id="scene"></div>
+  <div id="hud">
+    <div class="hint">Left stick drives morph & azimuth. m=0: four great circles. m&gt;0: one DAR circle; car loops on it. ARL +90°, ARR −180° apply only when m&gt;0.</div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "https://esm.sh/three@0.155.0";
+import { OrbitControls } from "https://esm.sh/three@0.155.0/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "https://esm.sh/three@0.155.0/examples/jsm/loaders/GLTFLoader.js";
+
+/* ---- scene ---- */
+const host=document.getElementById('scene');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight-document.querySelector('header').offsetHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+host.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x0f1116);
+const camera=new THREE.PerspectiveCamera(50,renderer.domElement.width/renderer.domElement.height,0.01,100);
+camera.position.set(2.3,1.6,2.5);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;
+
+scene.add(new THREE.HemisphereLight(0xd9e6ff,0x17202c,0.9));
+const dl=new THREE.DirectionalLight(0xffffff,0.6); dl.position.set(2,3,1); scene.add(dl);
+const grid=new THREE.GridHelper(8,16,0x2a3342,0x1d2430); grid.position.y=-1.25; scene.add(grid);
+
+const sphere=new THREE.Mesh(
+  new THREE.SphereGeometry(1,64,48),
+  new THREE.MeshPhongMaterial({color:0x0e141d,specular:0x111111,shininess:10,transparent:true,opacity:0.5})
+);
+scene.add(sphere);
+scene.add(new THREE.AxesHelper(1.25));
+
+const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
+pivot.position.set(0,0,1); scene.add(pivot);
+
+/* ---- materials & rings ---- */
+const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
+/* Colors per stick: up=red, down=green, right=blue, left=orange */
+const baseMats=[
+  new THREE.LineBasicMaterial({color:0xff5c5c}), // +Y
+  new THREE.LineBasicMaterial({color:0x53d769}), // -Y
+  new THREE.LineBasicMaterial({color:0x4c8dff}), // +X
+  new THREE.LineBasicMaterial({color:0xffd166})  // -X
+];
+/* Axes order: +Y, -Y, +X, -X */
+const axesDir=[ new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1,0), new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0) ];
+const phis = axesDir.map(a => Math.atan2(a.y, a.x)); // +Y=π/2, -Y=-π/2, +X=0, -X=π
+
+function framePerp(a){
+  const tmp=Math.abs(a.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0);
+  const u=tmp.clone().cross(a).normalize();
+  const v=a.clone().cross(u).normalize();
+  return {u,v};
+}
+
+/* Four great-circle lines */
+const rings=[];
+for(let i=0;i<4;i++){
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
+  const line=new THREE.Line(geo,baseMats[i]); line.userData.isRing=true; scene.add(line);
+  rings.push({line,cur:geo.attributes.position.array,axis:axesDir[i].clone(),phi:phis[i]});
+}
+function greatCirclePerAxis(axis,arrOut){
+  const {u,v}=framePerp(axis);
+  for(let k=0;k<=RING_SEGS;k++){
+    const t=(k/RING_SEGS)*Math.PI*2;
+    const p=u.clone().multiplyScalar(Math.cos(t)).add(v.clone().multiplyScalar(Math.sin(t)));
+    const i3=3*k; arrOut[i3]=p.x; arrOut[i3+1]=p.y; arrOut[i3+2]=p.z;
+  }
+}
+function drawGreatCircles(){
+  for(let i=0;i<4;i++){
+    greatCirclePerAxis(rings[i].axis, rings[i].cur);
+    rings[i].line.visible=true;
+    rings[i].line.geometry.attributes.position.needsUpdate=true;
+  }
+}
+
+/* Single DAR circle */
+const activeGeo=new THREE.BufferGeometry();
+activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
+const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true}));
+activeLine.visible=false; scene.add(activeLine);
+
+/* Car model */
+let car=null;
+const loader=new GLTFLoader();
+loader.load("models/car.glb",(gltf)=>{
+  car=gltf.scene;
+  // Adjust to taste
+  car.scale.set(0.4,0.4,0.4);
+  car.position.set(0,0,0);
+  scene.add(car);
+});
+
+/* UI */
+const morph=document.getElementById('morph');
+const morphTag=document.getElementById('morphTag');
+const alphaSlider=document.getElementById('alpha');
+const alphaTag=document.getElementById('alphaTag');
+const btnARL=document.getElementById('arl');
+const btnARR=document.getElementById('arr');
+
+let endConeDeg=+alphaSlider.value;
+let darMode='OFF'; // OFF | ARL | ARR
+alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
+
+/* Tri-state buttons */
+btnARL.addEventListener('click',()=>{
+  if(darMode==='ARL'){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); }
+  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); }
+});
+btnARR.addEventListener('click',()=>{
+  if(darMode==='ARR'){ darMode='OFF'; btnARR.setAttribute('aria-pressed','false'); }
+  else{ darMode='ARR'; btnARR.setAttribute('aria-pressed','true'); btnARL.setAttribute('aria-pressed','false'); }
+});
+
+/* Input: Gamepad with mouse fallback */
+let stickX=0, stickY=0;   // range [-1,1]
+let useMouse=false;
+window.addEventListener('mousemove', (e)=>{
+  if(!useMouse) return;
+  const rect=renderer.domElement.getBoundingClientRect();
+  const x=(e.clientX-rect.left)/rect.width*2-1;
+  const y=(e.clientY-rect.top)/rect.height*2-1;
+  stickX=THREE.MathUtils.clamp(x,-1,1);
+  stickY=THREE.MathUtils.clamp(-y,-1,1);
+});
+renderer.domElement.addEventListener('pointerdown', ()=>{ useMouse=true; });
+window.addEventListener('gamepadconnected', ()=>{ useMouse=false; });
+
+function pollGamepad(){
+  const pads=navigator.getGamepads?.()||[];
+  for(const gp of pads){
+    if(!gp) continue;
+    // Left stick: axes[0]=x, axes[1]=y (y up is -1). Invert Y so up is +1.
+    stickX=THREE.MathUtils.clamp(gp.axes[0]||0,-1,1);
+    stickY=THREE.MathUtils.clamp(-(gp.axes[1]||0),-1,1);
+    return;
+  }
+}
+
+/* DAR circle math */
+function circleFrame(alpha, phi){
+  const ca=Math.cos(alpha), sa=Math.sin(alpha);
+  const c=new THREE.Vector3(Math.sin(alpha)*Math.cos(phi),
+                            Math.sin(alpha)*Math.sin(phi),
+                            Math.cos(alpha)).normalize(); // cone axis
+  const tmp=Math.abs(c.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0);
+  const u=tmp.clone().cross(c).normalize();
+  const v=c.clone().cross(u).normalize();
+  // phase so t=0 passes through pivot (0,0,1)
+  const w=new THREE.Vector3(0,0,1).sub(c.clone().multiplyScalar(ca)).multiplyScalar(1/Math.max(1e-6,sa));
+  const t0=Math.atan2(w.dot(v), w.dot(u));
+  return {c,ca,sa,u,v,t0};
+}
+function pointOnCircle(cf, t){
+  const {c,ca,sa,u,v}=cf;
+  return c.clone().multiplyScalar(ca)
+           .add(u.clone().multiplyScalar(Math.cos(t)*sa))
+           .add(v.clone().multiplyScalar(Math.sin(t)*sa));
+}
+function tangentOnCircle(cf, t){
+  const {sa,u,v}=cf;
+  // derivative wrt t
+  return u.clone().multiplyScalar(-Math.sin(t)*sa)
+         .add(v.clone().multiplyScalar(Math.cos(t)*sa));
+}
+function drawCircle(cf, arrOut){
+  for(let k=0;k<=RING_SEGS;k++){
+    const t=cf.t0+(k/RING_SEGS)*Math.PI*2;
+    const p=pointOnCircle(cf,t);
+    const i3=3*k; arrOut[i3]=p.x; arrOut[i3+1]=p.y; arrOut[i3+2]=p.z;
+  }
+}
+
+/* Car motion state */
+let haveCircle=false;
+let cfCurrent=null;     // current circle frame
+let phase=0;            // current phase t on circle
+let lastPos=null;       // last world pos to project continuity
+const angVelBase=1.8;   // radians/sec nominal speed around circle
+let lastTime=performance.now();
+
+/* Helper: project current car position onto new circle to keep continuity */
+function reprojectPhase(cf){
+  // pick reference point: lastPos if exists, otherwise point at current phase on old/new
+  let pRef=null;
+  if(lastPos) pRef=lastPos.clone().normalize();
+  else pRef = pointOnCircle(cf, cf.t0); // start at pivot
+  // Build local coords for circle plane center c*ca and basis u,v
+  const center=cf.c.clone().multiplyScalar(cf.ca);
+  const q=pRef.clone().sub(center); // vector in circle plane (ideally length sa)
+  const x=q.dot(cf.u), y=q.dot(cf.v);
+  const t=Math.atan2(y,x);
+  return t;
+}
+
+/* Colors: change only when m>0 */
+function applyColorRotation(m){
+  // base mapping for great circles or OFF
+  for(let i=0;i<4;i++) rings[i].line.material = baseMats[i];
+  if(m<=EPS) return;
+  let shift=0;
+  if(darMode==='ARL') shift=+1;   // +90° CW
+  if(darMode==='ARR') shift=-2;   // −180° CCW
+  if(shift!==0){
+    for(let i=0;i<4;i++){
+      const matIndex=(i - shift + 4)%4;
+      rings[i].line.material = baseMats[matIndex];
+    }
+  }
+}
+
+/* Main update per frame */
+function update(dt){
+  // Inputs
+  pollGamepad();
+  const r=Math.hypot(stickX, stickY);
+  const rClamped=Math.min(1, Math.max(0, r));
+  const m=rClamped;                         // morph driven by stick magnitude
+  morph.value=String(m);
+  morphTag.textContent=m.toFixed(3);
+
+  applyColorRotation(m);
+
+  if(m<=EPS){
+    // show four great circles, hide active circle
+    activeLine.visible=false;
+    drawGreatCircles();
+    haveCircle=false;
+  }else{
+    // Single circle: alpha from ~0° to endCone, phi from stick direction plus DAR offset
+    const aMin=THREE.MathUtils.degToRad(0.001);
+    const aMax=THREE.MathUtils.degToRad(endConeDeg);
+    const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
+
+    // Stick azimuth: atan2(y,x); Gamepad Y already inverted so up is +.
+    let phi=Math.atan2(stickY, stickX);
+    // DAR offsets: ARL +90°, ARR −180°, OFF 0
+    if(darMode==='ARL') phi += Math.PI/2;
+    if(darMode==='ARR') phi -= Math.PI;
+
+    // Build new frame and line
+    const cf=circleFrame(alpha, phi);
+    const posArr=activeGeo.attributes.position.array;
+    drawCircle(cf, posArr);
+    activeGeo.attributes.position.needsUpdate=true;
+    activeLine.visible=true;
+
+    // Hide great circles while in DAR view
+    for(const rL of rings) rL.line.visible=false;
+
+    // Maintain phase continuity
+    if(!haveCircle || !cfCurrent){
+      cfCurrent=cf;
+      phase=reprojectPhase(cfCurrent);
+      haveCircle=true;
+    }else{
+      // If frame changed significantly, reproject from lastPos
+      const changed = Math.abs(cfCurrent.ca-cf.ca)>1e-6 || cfCurrent.c.angleTo(cf.c)>1e-4;
+      cfCurrent=cf;
+      if(changed) phase=reprojectPhase(cfCurrent);
+    }
+
+    // Advance along circle with speed scaled by circle size (smaller alpha -> shorter circumference)
+    const speed = angVelBase * (0.3 + 0.7 * (alpha/aMax)); // keep some speed at tiny alpha
+    phase += speed * dt;
+
+    // Position and orient car on circle
+    const p=pointOnCircle(cfCurrent, phase);
+    lastPos=p.clone();
+    if(car){
+      car.position.copy(p);
+      // Tangent direction for facing; up vector as surface normal
+      const tDir=tangentOnCircle(cfCurrent, phase).normalize();
+      const up=p.clone().normalize();
+      const target=p.clone().add(tDir);
+      car.up.copy(up);
+      car.lookAt(target);
+    }
+  }
+}
+
+/* animate */
+document.getElementById('reset').addEventListener('click',()=>{
+  camera.position.set(2.3,1.6,2.5);
+  controls.target.set(0,0,0);
+  controls.update();
+  // reset motion state
+  haveCircle=false; cfCurrent=null; lastPos=null; phase=0;
+  morph.value="0"; morphTag.textContent="0.000";
+});
+
+function tick(){
+  const now=performance.now();
+  const dt=Math.min(0.05, (now-lastTime)/1000); // clamp dt
+  lastTime=now;
+
+  update(dt);
+  controls.update();
+  renderer.render(scene,camera);
+  requestAnimationFrame(tick);
+}
+
+/* initial setup */
+drawGreatCircles();
+tick();
+
+/* resize */
+addEventListener('resize',()=>{
+  const h=document.querySelector('header').offsetHeight;
+  renderer.setSize(innerWidth,innerHeight-h);
+  camera.aspect=renderer.domElement.width/renderer.domElement.height;
+  camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>
