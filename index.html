@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Stable Stake Rig (Rod Height)</title>
+<title>DAR Rings — Stake Rig, Dir-Dependent Spin</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -55,7 +55,7 @@
       </div>
       <div class="sliderBlock">
         <label for="carHeight">Car Height (mesh offset)</label>
-        <input id="carHeight" type="range" min="-3.0" max="3.0" step="0.001" value="-0.200">
+        <input id="carHeight" type="range" min="-15.0" max="15.0" step="0.001" value="-0.200">
         <span id="carHeightTag" class="tag">-0.200</span>
       </div>
     </div>
@@ -80,7 +80,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Car center = rod anchor by default. Use mesh offset to nudge the body without breaking the stake axis. Deadzone=0.08. Stick colors +45° CW.</div>
+    <div class="hint">Guides always on. m&gt;0 overlays DAR circle. Car center fixed to rod. Roll follows arc. ARL/ARR toggle and set spin direction. Deadzone=0.08. Stick colors +45° CW.</div>
   </div>
 </div>
 
@@ -141,14 +141,11 @@ const carSpin=new THREE.Group(); carAim.add(carSpin);
 const carOffset=new THREE.Group(); carSpin.add(carOffset);
 
 let carMesh=null;
-let carScale=0.010, rodHeight=-0.200, carHeight=-0.200; // defaults
+let carScale=0.010, rodHeight=-0.200, carHeight=-0.200;
 carRoot.position.set(0,rodHeight,0);
 carOffset.position.y = carHeight - rodHeight;
 
-// helper axis (optional)
-const carAxes=new THREE.AxesHelper(0.25); carAxes.visible=false; carSpin.add(carAxes);
-
-// fallback geometry if GLTF missing
+// fallback box if model missing
 const fallback=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.24,0.8), new THREE.MeshStandardMaterial({color:0x8899aa,metalness:0.1,roughness:0.8,transparent:true,opacity:0.95}));
 fallback.visible=true; carOffset.add(fallback);
 
@@ -163,7 +160,7 @@ new GLTFLoader().load("models/car.glb",(gltf)=>{
 });
 function setCarScale(s){ carSpin.scale.setScalar(s); }
 
-/* stake line from rod anchor (carRoot) to nose point */
+/* stake from rod anchor to nose target */
 const stakeGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]);
 const stake=new THREE.Line(stakeGeo,new THREE.LineBasicMaterial({color:0x9aa6bd,transparent:true,opacity:0.9}));
 scene.add(stake);
@@ -180,14 +177,24 @@ const carHeightEl=document.getElementById('carHeight'), carHeightTag=document.ge
 const rodHeightEl=document.getElementById('rodHeight'), rodHeightTag=document.getElementById('rodHeightTag');
 const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr');
 
-let endConeDeg=+alphaSlider.value, darMode='OFF';
+let endConeDeg=+alphaSlider.value;
+let darMode='OFF'; // 'OFF' | 'ARL' | 'ARR'
+
 alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
 carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); setCarScale(carScale); });
 rodHeightEl.addEventListener('input',()=>{ rodHeight=+rodHeightEl.value; rodHeightTag.textContent=rodHeight.toFixed(3); carRoot.position.y=rodHeight; carOffset.position.y = carHeight - rodHeight; });
 carHeightEl.addEventListener('input',()=>{ carHeight=+carHeightEl.value; carHeightTag.textContent=carHeight.toFixed(3); carOffset.position.y = carHeight - rodHeight; });
 
-btnARL.addEventListener('click',()=>{ if(darMode==='ARL'){darMode='OFF';btnARL.setAttribute('aria-pressed','false');} else{darMode='ARL';btnARL.setAttribute('aria-pressed','true');btnARR.setAttribute('aria-pressed','false');}});
-btnARR.addEventListener('click',()=>{ if(darMode==='ARR'){darMode='OFF';btnARR.setAttribute('aria-pressed','false');} else{darMode='ARR';btnARR.setAttribute('aria-pressed','true');btnARL.setAttribute('aria-pressed','false');}});
+btnARL.addEventListener('click',()=>{
+  const active = btnARL.getAttribute('aria-pressed')==='true';
+  if(active){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); }
+  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); }
+});
+btnARR.addEventListener('click',()=>{
+  const active = btnARR.getAttribute('aria-pressed')==='true';
+  if(active){ darMode='OFF'; btnARR.setAttribute('aria-pressed','false'); }
+  else{ darMode='ARR'; btnARR.setAttribute('aria-pressed','true'); btnARL.setAttribute('aria-pressed','false'); }
+});
 
 document.getElementById('reset').addEventListener('click',()=>{
   camera.position.set(2.3,1.6,2.5); controls.target.set(0,0,0); controls.update();
@@ -226,7 +233,16 @@ function drawCircle(cf,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=cf.t0+(k/RIN
 
 /* state */
 let cfCurrent=null, phase=0, lastPoint=null, lastTime=performance.now(), phaseZero=0;
-function applyColorRotation(m){ for(let i=0;i<4;i++) rings[i].line.material=baseMats[i]; if(m<=EPS) return; let shift=0; if(darMode==='ARL') shift=+1; if(darMode==='ARR') shift=-2; if(shift!==0){ for(let i=0;i<4;i++){ const mi=(i-shift+4)%4; rings[i].line.material=baseMats[mi]; } } }
+
+/* color rotation only when m>0 */
+function applyColorRotation(m){
+  for(let i=0;i<4;i++) rings[i].line.material=baseMats[i];
+  if(m<=EPS) return;
+  let shift=0;
+  if(darMode==='ARL') shift=+1;
+  if(darMode==='ARR') shift=-2;
+  if(shift!==0){ for(let i=0;i<4;i++){ const mi=(i-shift+4)%4; rings[i].line.material=baseMats[mi]; } }
+}
 
 /* update */
 const angVelBase=1.8;
@@ -235,6 +251,7 @@ function update(dt){
   const r=Math.hypot(stickX,stickY); const m=Math.min(1,Math.max(0,r));
   morph.value=String(m); morphTag.textContent=m.toFixed(3);
   applyColorRotation(m);
+
   const guideOpacity=m>EPS?0.35:0.9; for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=guideOpacity; }
 
   const rodAnchor=new THREE.Vector3(0,rodHeight,0);
@@ -244,16 +261,13 @@ function update(dt){
     const idleTarget=new THREE.Vector3(0,0,1);
     noseMarker.position.copy(idleTarget);
 
-    // aim +Z along stake
     const stakeDir=idleTarget.clone().sub(rodAnchor).normalize();
-    carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
-    carSpin.quaternion.identity();
-
-    // place rig and mesh offset
     carRoot.position.copy(rodAnchor);
     carOffset.position.y = carHeight - rodHeight;
 
-    // stake line
+    carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
+    carSpin.quaternion.identity();
+
     const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,idleTarget.x,idleTarget.y,idleTarget.z); pa.needsUpdate=true;
 
     drawStick(); return;
@@ -262,7 +276,9 @@ function update(dt){
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
 
-  let phi=Math.atan2(stickY,stickX); if(darMode==='ARL') phi+=Math.PI/2; if(darMode==='ARR') phi-=Math.PI;
+  let phi=Math.atan2(stickY,stickX);
+  if(darMode==='ARL') phi+=Math.PI/2;
+  if(darMode==='ARR') phi-=Math.PI;
 
   const prevPoint=(cfCurrent?pointOnCircle(cfCurrent,phase):(lastPoint||new THREE.Vector3(0,0,1)));
   const cf=circleFrame(alpha,phi);
@@ -272,28 +288,30 @@ function update(dt){
   const q=prevPoint.clone().normalize().sub(center);
   const x=q.dot(cf.u), y=q.dot(cf.v);
   phase=Math.atan2(y,x);
+
   phaseZero=cf.t0;
 
-  const speed=angVelBase*(0.3+0.7*(alpha/aMax)); phase+=speed*dt;
+  const speed=angVelBase*(0.3+0.7*(alpha/aMax));
+  phase+=speed*dt;
+
   cfCurrent=cf;
 
   const noseTarget=pointOnCircle(cfCurrent,phase);
   lastPoint=noseTarget.clone();
   noseMarker.position.copy(noseTarget);
 
-  // stake direction
   const stakeDir=noseTarget.clone().sub(rodAnchor).normalize();
 
-  // place rig and mesh offset
   carRoot.position.copy(rodAnchor);
   carOffset.position.y = carHeight - rodHeight;
 
-  // aim +Z to stake, then roll by arc progress
   carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
-  const rollAngle=phase - phaseZero;
+
+  // spin direction depends on DAR: ARL = +1, ARR = -1, OFF = +1
+  const spinDir = (darMode==='ARR') ? -1 : 1;
+  const rollAngle = spinDir * (phase - phaseZero);
   carSpin.quaternion.setFromAxisAngle(new THREE.Vector3(0,0,1), rollAngle);
 
-  // stake line
   const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
 
   drawStick();
