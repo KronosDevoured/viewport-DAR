@@ -3,16 +3,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Clamped Car, Spin Demo, Guides + Stick</title>
+<title>DAR Rings — Phase-Locked Spin + Tether</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
-
-  header{
-    display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;
-    gap:.6rem .8rem;padding:.6rem .8rem;background:#12161d;border-bottom:1px solid #1f2530;
-  }
-  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 680px;min-width:0}
+  header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.6rem .8rem;padding:.6rem .8rem;background:#12161d;border-bottom:1px solid #1f2530}
+  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 720px;min-width:0}
   .sliderBlock{display:flex;flex-direction:column;gap:.25rem;flex:1 1 200px;min-width:160px}
   .sliderBlock label{font-size:.9rem;opacity:.9}
   .sliderBlock input[type=range]{flex:1;min-width:80px}
@@ -22,11 +18,9 @@
   .toggle{border:1px solid #2a3342;background:#0f141c;border-radius:10px;display:flex;overflow:hidden}
   .toggle button{border:0;padding:.35rem .6rem}
   .toggle button[aria-pressed="true"]{background:#1a2230}
-
   #scene{position:relative}
   #hud{position:absolute;inset:auto 0 .8rem 0;display:flex;justify-content:center;gap:.8rem;pointer-events:none}
   .hint{pointer-events:auto;background:#0f141c;border:1px solid #2a3342;padding:.35rem .55rem;border-radius:10px;font-size:.85rem}
-
   /* On-screen stick */
   #stickWrap{pointer-events:auto;display:flex;align-items:center;gap:.5rem;background:#0f141c;border:1px solid #2a3342;border-radius:12px;padding:.4rem .6rem}
   #stick{width:120px;height:120px;display:block}
@@ -61,7 +55,6 @@
         <span id="carHeightTag" class="tag">-0.020</span>
       </div>
     </div>
-
     <div class="actions">
       <div class="toggle" role="toolbar" aria-label="DAR mode">
         <button id="arl" type="button" aria-pressed="false" title="Analog Rotate Left (+90°)">ARL</button>
@@ -83,7 +76,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Four great circles are always visible. m&gt;0 adds a DAR circle. Car is clamped at origin, nose aims at DAR point, and spins in-place to demo tornado. Deadzone=0.08.</div>
+    <div class="hint">Four great circles always on. m&gt;0 overlays one DAR circle. Car stays at origin, nose tracks the circle. Roll equals arc progress. Deadzone=0.08. Stick colors +45° CW.</div>
   </div>
 </div>
 
@@ -92,7 +85,7 @@ import * as THREE from "https://esm.sh/three@0.155.0";
 import { OrbitControls } from "https://esm.sh/three@0.155.0/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "https://esm.sh/three@0.155.0/examples/jsm/loaders/GLTFLoader.js";
 
-/* ---------- scene ---------- */
+/* ---- scene ---- */
 const host=document.getElementById('scene');
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
@@ -110,7 +103,7 @@ controls.enableDamping=true;
 scene.add(new THREE.HemisphereLight(0xd9e6ff,0x17202c,0.9));
 const dl=new THREE.DirectionalLight(0xffffff,0.6); dl.position.set(2,3,1); scene.add(dl);
 
-/* Reference sphere + grid */
+/* reference sphere + grid */
 const refSphere=new THREE.Mesh(
   new THREE.SphereGeometry(1,64,48),
   new THREE.MeshPhongMaterial({color:0x0e141d,specular:0x111111,shininess:10,transparent:true,opacity:0.25})
@@ -119,20 +112,20 @@ scene.add(refSphere);
 const grid=new THREE.GridHelper(8,16,0x2a3342,0x1d2430); grid.position.y=-1.25; scene.add(grid);
 scene.add(new THREE.AxesHelper(1.25));
 
-/* Pivot (north pole) */
+/* pivot at north pole */
 const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
 pivot.position.set(0,0,1); scene.add(pivot);
 
-/* ---------- rings (always drawn) ---------- */
+/* ---- rings ---- */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
-const baseMats=[ // fadeable
-  new THREE.LineBasicMaterial({color:0xff5c5c, transparent:true, opacity:0.9}), // +Y
-  new THREE.LineBasicMaterial({color:0x53d769, transparent:true, opacity:0.9}), // -Y
-  new THREE.LineBasicMaterial({color:0x4c8dff, transparent:true, opacity:0.9}), // +X
-  new THREE.LineBasicMaterial({color:0xffd166, transparent:true, opacity:0.9})  // -X
+const baseMats=[
+  new THREE.LineBasicMaterial({color:0xff5c5c,transparent:true,opacity:0.9}), // +Y
+  new THREE.LineBasicMaterial({color:0x53d769,transparent:true,opacity:0.9}), // -Y
+  new THREE.LineBasicMaterial({color:0x4c8dff,transparent:true,opacity:0.9}), // +X
+  new THREE.LineBasicMaterial({color:0xffd166,transparent:true,opacity:0.9})  // -X
 ];
 const axesDir=[ new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1,0), new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0) ];
-const phis = axesDir.map(a => Math.atan2(a.y, a.x));
+const phis=axesDir.map(a=>Math.atan2(a.y,a.x));
 
 function framePerp(a){
   const tmp=Math.abs(a.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0);
@@ -140,6 +133,7 @@ function framePerp(a){
   const v=a.clone().cross(u).normalize();
   return {u,v};
 }
+
 const rings=[];
 for(let i=0;i<4;i++){
   const geo=new THREE.BufferGeometry();
@@ -147,40 +141,37 @@ for(let i=0;i<4;i++){
   const line=new THREE.Line(geo,baseMats[i]); scene.add(line);
   rings.push({line,cur:geo.attributes.position.array,axis:axesDir[i].clone(),phi:phis[i]});
 }
-function greatCirclePerAxis(axis,arrOut){
+function greatCirclePerAxis(axis,arr){
   const {u,v}=framePerp(axis);
   for(let k=0;k<=RING_SEGS;k++){
     const t=(k/RING_SEGS)*Math.PI*2;
     const p=u.clone().multiplyScalar(Math.cos(t)).add(v.clone().multiplyScalar(Math.sin(t)));
-    const i3=3*k; arrOut[i3]=p.x; arrOut[i3+1]=p.y; arrOut[i3+2]=p.z;
+    const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z;
   }
 }
 function drawGreatCircles(){
   for(const r of rings){
-    greatCirclePerAxis(r.axis, r.cur);
+    greatCirclePerAxis(r.axis,r.cur);
     r.line.visible=true;
     r.line.geometry.attributes.position.needsUpdate=true;
   }
 }
 
-/* Active DAR circle */
+/* active DAR circle */
 const activeGeo=new THREE.BufferGeometry();
 activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
 const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true}));
 activeLine.visible=false; scene.add(activeLine);
 
-/* ---------- car at origin, with size + height sliders, spins when DAR active ---------- */
-const carRig=new THREE.Group();
-scene.add(carRig);
+/* ---- car rig at origin (size + height sliders) ---- */
+const carRig=new THREE.Group(); scene.add(carRig);
 let carMesh=null;
-let carScale=0.010;          // default
-let carHeight=-0.020;        // default down a bit
+let carScale=0.010;
+let carHeight=-0.020;
 carRig.position.set(0,carHeight,0);
 
-function alignForwardToZ(obj, from='X'){
-  const map={ 'X':new THREE.Vector3(1,0,0), '-X':new THREE.Vector3(-1,0,0),
-              'Y':new THREE.Vector3(0,1,0), '-Y':new THREE.Vector3(0,-1,0),
-              'Z':new THREE.Vector3(0,0,1), '-Z':new THREE.Vector3(0,0,-1) };
+function alignForwardToZ(obj,from='X'){
+  const map={'X':new THREE.Vector3(1,0,0),'-X':new THREE.Vector3(-1,0,0),'Y':new THREE.Vector3(0,1,0),'-Y':new THREE.Vector3(0,-1,0),'Z':new THREE.Vector3(0,0,1),'-Z':new THREE.Vector3(0,0,-1)};
   const v=map[from]||map['X'];
   const q=new THREE.Quaternion().setFromUnitVectors(v,new THREE.Vector3(0,0,1));
   obj.quaternion.premultiply(q);
@@ -188,23 +179,27 @@ function alignForwardToZ(obj, from='X'){
 
 new GLTFLoader().load("models/car.glb",(gltf)=>{
   carMesh=gltf.scene;
-  alignForwardToZ(carMesh,'X');      // mesh forward +X -> rig +Z
+  alignForwardToZ(carMesh,'X'); // mesh +X -> rig +Z
   carRig.add(carMesh);
   carRig.scale.setScalar(carScale);
 });
 
-/* Nose marker (target point) */
-const noseMarker=new THREE.Mesh(new THREE.SphereGeometry(0.02,16,12), new THREE.MeshBasicMaterial({color:0xffffff}));
+/* nose marker and tether line */
+const noseMarker=new THREE.Mesh(new THREE.SphereGeometry(0.02,16,12),new THREE.MeshBasicMaterial({color:0xffffff}));
 scene.add(noseMarker);
+const tetherGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]);
+const tether=new THREE.Line(tetherGeo,new THREE.LineBasicMaterial({color:0x9aa6bd,transparent:true,opacity:0.8}));
+scene.add(tether);
 
-/* ---------- UI ---------- */
+/* ---- UI ---- */
 const morph=document.getElementById('morph'), morphTag=document.getElementById('morphTag');
 const alphaSlider=document.getElementById('alpha'), alphaTag=document.getElementById('alphaTag');
 const carSize=document.getElementById('carSize'), carSizeTag=document.getElementById('carSizeTag');
 const carHeightEl=document.getElementById('carHeight'), carHeightTag=document.getElementById('carHeightTag');
 const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr');
 
-let endConeDeg=+alphaSlider.value, darMode='OFF';
+let endConeDeg=+alphaSlider.value;
+let darMode='OFF';
 alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
 carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); carRig.scale.setScalar(carScale); });
 carHeightEl.addEventListener('input',()=>{ carHeight=+carHeightEl.value; carHeightTag.textContent=carHeight.toFixed(3); carRig.position.y=carHeight; });
@@ -216,12 +211,12 @@ document.getElementById('reset').addEventListener('click',()=>{
   camera.position.set(2.3,1.6,2.5);
   controls.target.set(0,0,0);
   controls.update();
-  cfCurrent=null; phase=0; lastPoint=null;
+  cfCurrent=null; phase=0; lastPoint=null; phaseZero=0;
   morph.value="0"; morphTag.textContent="0.000";
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
 });
 
-/* ---------- input + on-screen stick (colors rotated 45° CW) ---------- */
+/* ---- input + on-screen stick (colors +45° CW) ---- */
 let stickX=0, stickY=0; const DEADZONE=0.08;
 function dz(v){ return Math.abs(v)<DEADZONE?0:v; }
 function pollGamepad(){
@@ -229,7 +224,7 @@ function pollGamepad(){
   for(const gp of pads){
     if(!gp) continue;
     stickX=dz(gp.axes[0]||0);
-    stickY=dz(-(gp.axes[1]||0)); // up positive
+    stickY=dz(-(gp.axes[1]||0));
     return;
   }
 }
@@ -238,9 +233,7 @@ const sctx=stickCanvas.getContext('2d');
 const DPR=Math.min(devicePixelRatio||1,2);
 stickCanvas.width=120*DPR; stickCanvas.height=120*DPR;
 stickCanvas.style.width='120px'; stickCanvas.style.height='120px';
-
-/* rotate color quadrants by +45° (clockwise) */
-const THETA_SHIFT = -Math.PI/4; // CW
+const THETA_SHIFT=-Math.PI/4; // +45° CW
 function drawStick(){
   const ctx=sctx, w=stickCanvas.width, h=stickCanvas.height, cx=w/2, cy=h/2;
   const R=Math.min(w,h)*0.45;
@@ -249,102 +242,88 @@ function drawStick(){
   ctx.strokeStyle='#2a3342'; ctx.lineWidth=2*DPR; ctx.stroke();
   ctx.beginPath(); ctx.arc(cx,cy,R*DEADZONE,0,Math.PI*2);
   ctx.strokeStyle='#3a4557'; ctx.setLineDash([4*DPR,4*DPR]); ctx.stroke(); ctx.setLineDash([]);
-
   const arcs=[
-    {start:-Math.PI/2+THETA_SHIFT, end:0+THETA_SHIFT, color:'#ff5c5c'},   // Up (red)
-    {start: Math.PI/2+THETA_SHIFT, end:Math.PI+THETA_SHIFT, color:'#53d769'}, // Down (green)
-    {start:0+THETA_SHIFT, end:Math.PI/2+THETA_SHIFT, color:'#4c8dff'},    // Right (blue)
-    {start:Math.PI+THETA_SHIFT, end:1.5*Math.PI+THETA_SHIFT, color:'#ffd166'} // Left (orange)
+    {start:-Math.PI/2+THETA_SHIFT, end:0+THETA_SHIFT, color:'#ff5c5c'},      // Up
+    {start: Math.PI/2+THETA_SHIFT, end:Math.PI+THETA_SHIFT, color:'#53d769'},// Down
+    {start:0+THETA_SHIFT, end:Math.PI/2+THETA_SHIFT, color:'#4c8dff'},       // Right
+    {start:Math.PI+THETA_SHIFT, end:1.5*Math.PI+THETA_SHIFT, color:'#ffd166'}// Left
   ];
-  ctx.lineWidth=3*DPR;
-  for(const a of arcs){ ctx.beginPath(); ctx.arc(cx,cy,R,a.start,a.end); ctx.strokeStyle=a.color; ctx.stroke(); }
-
+  ctx.lineWidth=3*DPR; for(const a of arcs){ ctx.beginPath(); ctx.arc(cx,cy,R,a.start,a.end); ctx.strokeStyle=a.color; ctx.stroke(); }
   const kx=cx + stickX*R, ky=cy - stickY*R;
   ctx.beginPath(); ctx.arc(kx,ky,6*DPR,0,Math.PI*2);
-  ctx.fillStyle='#e7ecf3'; ctx.fill();
-  ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
+  ctx.fillStyle='#e7ecf3'; ctx.fill(); ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
 }
 
-/* ---------- DAR math ---------- */
+/* ---- DAR math ---- */
 function circleFrame(alpha,phi){
   const ca=Math.cos(alpha), sa=Math.sin(alpha);
-  const c=new THREE.Vector3(Math.sin(alpha)*Math.cos(phi),
-                            Math.sin(alpha)*Math.sin(phi),
-                            Math.cos(alpha)).normalize();
+  const c=new THREE.Vector3(Math.sin(alpha)*Math.cos(phi),Math.sin(alpha)*Math.sin(phi),Math.cos(alpha)).normalize();
   const tmp=Math.abs(c.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0);
   const u=tmp.clone().cross(c).normalize();
   const v=c.clone().cross(u).normalize();
   const w=new THREE.Vector3(0,0,1).sub(c.clone().multiplyScalar(ca)).multiplyScalar(1/Math.max(1e-6,sa));
-  const t0=Math.atan2(w.dot(v), w.dot(u));
+  const t0=Math.atan2(w.dot(v),w.dot(u)); // north-pole crossing
   return {c,ca,sa,u,v,t0};
 }
 function pointOnCircle(cf,t){
   return cf.c.clone().multiplyScalar(cf.ca)
-           .add(cf.u.clone().multiplyScalar(Math.cos(t)*cf.sa))
-           .add(cf.v.clone().multiplyScalar(Math.sin(t)*cf.sa));
+    .add(cf.u.clone().multiplyScalar(Math.cos(t)*cf.sa))
+    .add(cf.v.clone().multiplyScalar(Math.sin(t)*cf.sa));
 }
-function drawCircle(cf, arrOut){
+function drawCircle(cf,arr){
   for(let k=0;k<=RING_SEGS;k++){
     const t=cf.t0+(k/RING_SEGS)*Math.PI*2;
     const p=pointOnCircle(cf,t);
-    const i3=3*k; arrOut[i3]=p.x; arrOut[i3+1]=p.y; arrOut[i3+2]=p.z;
+    const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z;
   }
 }
 
-/* ---------- state ---------- */
+/* ---- state ---- */
 let cfCurrent=null, phase=0, lastPoint=null, lastTime=performance.now();
+let phaseZero=0; // roll reference tied to circle's t0 or chosen phase
 
-/* colors: base at m==0; rotate only when m>0 */
+/* color rotation only when m>0 */
 function applyColorRotation(m){
   for(let i=0;i<4;i++) rings[i].line.material=baseMats[i];
   if(m<=EPS) return;
   let shift=0;
   if(darMode==='ARL') shift=+1;
   if(darMode==='ARR') shift=-2;
-  if(shift!==0){
-    for(let i=0;i<4;i++){
-      const matIndex=(i - shift + 4) % 4;
-      rings[i].line.material=baseMats[matIndex];
-    }
-  }
+  if(shift!==0){ for(let i=0;i<4;i++){ const mi=(i-shift+4)%4; rings[i].line.material=baseMats[mi]; } }
 }
 
-/* ---------- update (no resets) ---------- */
+/* ---- update ---- */
 const angVelBase=1.8;
-let spinAngle=0;                 // tornado spin angle
-const spinSpeed=4.0;             // rad/s while DAR active
-
 function update(dt){
   pollGamepad();
-
   const r=Math.hypot(stickX,stickY);
   const m=Math.min(1,Math.max(0,r));
   morph.value=String(m); morphTag.textContent=m.toFixed(3);
-
   applyColorRotation(m);
 
-  // guides always visible
-  const guideOpacity = m>EPS ? 0.35 : 0.9;
+  const guideOpacity=m>EPS?0.35:0.9;
   for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=guideOpacity; }
+
+  const carBasePos=new THREE.Vector3(0,carHeight,0);
 
   if(m<=EPS){
     activeLine.visible=false;
     drawGreatCircles();
-
-    // Nose to pivot
-    const idleTarget = new THREE.Vector3(0,1,0).set(0,0,1);
+    const idleTarget=new THREE.Vector3(0,0,1);
     noseMarker.position.copy(idleTarget);
-    // Orient car to idle target with no spin
-    const forward = idleTarget.clone().sub(new THREE.Vector3(0,carHeight,0)).normalize();
-    const baseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), forward);
+    const forward=idleTarget.clone().sub(carBasePos).normalize();
+    const baseQ=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1),forward);
     carRig.quaternion.copy(baseQ);
-    carRig.position.set(0,carHeight,0);
-
+    carRig.position.copy(carBasePos);
+    // tether
+    const pa=tether.geometry.getAttribute('position');
+    pa.setXYZ(0,carBasePos.x,carBasePos.y,carBasePos.z);
+    pa.setXYZ(1,idleTarget.x,idleTarget.y,idleTarget.z);
+    pa.needsUpdate=true;
     drawStick();
     return;
   }
 
-  // circle from stick
   const aMin=THREE.MathUtils.degToRad(0.001);
   const aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
@@ -353,46 +332,52 @@ function update(dt){
   if(darMode==='ARL') phi+=Math.PI/2;
   if(darMode==='ARR') phi-=Math.PI;
 
-  // continuity: previous target before updating frame
-  const prevPoint = (cfCurrent ? pointOnCircle(cfCurrent, phase) : (lastPoint || new THREE.Vector3(0,0,1)));
-
+  const prevPoint=(cfCurrent?pointOnCircle(cfCurrent,phase):(lastPoint||new THREE.Vector3(0,0,1)));
   const cf=circleFrame(alpha,phi);
-  drawCircle(cf, activeGeo.attributes.position.array);
+  drawCircle(cf,activeGeo.attributes.position.array);
   activeGeo.attributes.position.needsUpdate=true;
   activeLine.visible=true;
 
-  // reproject prev point to new circle for continuous phase
+  // reproject previous target onto new circle for continuous phase
   const center=cf.c.clone().multiplyScalar(cf.ca);
   const q=prevPoint.clone().normalize().sub(center);
   const x=q.dot(cf.u), y=q.dot(cf.v);
-  phase = Math.atan2(y,x);
+  phase=Math.atan2(y,x);
 
-  // advance around circle
-  const speed = angVelBase * (0.3 + 0.7 * (alpha/aMax));
-  phase += speed * dt;
+  // choose roll reference. Use circle's t0 so roll=0 at north-pole crossing.
+  phaseZero=cf.t0;
 
-  cfCurrent = cf;
+  // advance along circle
+  const speed=angVelBase*(0.3+0.7*(alpha/aMax));
+  phase+=speed*dt;
 
-  // target point on circle (nose)
-  const noseTarget = pointOnCircle(cfCurrent, phase);
-  lastPoint = noseTarget.clone();
+  cfCurrent=cf;
+
+  // nose target and orientation
+  const noseTarget=pointOnCircle(cfCurrent,phase);
+  lastPoint=noseTarget.clone();
   noseMarker.position.copy(noseTarget);
 
-  // car stays at origin + height; aim nose to target; add tornado spin around forward
-  const carBasePos = new THREE.Vector3(0,carHeight,0);
-  const forward = noseTarget.clone().sub(carBasePos).normalize(); // from car center to target
-  const baseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), forward);
+  const forward=noseTarget.clone().sub(carBasePos).normalize();
+  const baseQ=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1),forward);
 
-  spinAngle += spinSpeed * dt; // continuous spin while DAR active
-  const qRoll = new THREE.Quaternion().setFromAxisAngle(forward, spinAngle);
+  // roll equals traveled angle along circle
+  const rollAngle=phase - phaseZero;
+  const qRoll=new THREE.Quaternion().setFromAxisAngle(forward,rollAngle);
 
   carRig.quaternion.copy(baseQ).multiply(qRoll);
   carRig.position.copy(carBasePos);
 
+  // tether
+  const pa=tether.geometry.getAttribute('position');
+  pa.setXYZ(0,carBasePos.x,carBasePos.y,carBasePos.z);
+  pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z);
+  pa.needsUpdate=true;
+
   drawStick();
 }
 
-/* ---------- animate ---------- */
+/* ---- animate ---- */
 function tick(){
   const now=performance.now();
   const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now;
@@ -406,22 +391,13 @@ function tick(){
 drawGreatCircles();
 tick();
 
-/* ---------- resize ---------- */
+/* ---- resize ---- */
 addEventListener('resize',()=>{
   const h=document.querySelector('header').offsetHeight;
   renderer.setSize(innerWidth,innerHeight-h);
   camera.aspect=renderer.domElement.width/renderer.domElement.height;
   camera.updateProjectionMatrix();
 });
-
-/* ---------- controls / state ---------- */
-darkMode='OFF';
-function applyInitialUI(){
-  alphaTag.textContent=endConeDeg+'°';
-  carSizeTag.textContent=carScale.toFixed(3);
-  carHeightTag.textContent=carHeight.toFixed(3);
-}
-applyInitialUI();
 </script>
 </body>
 </html>
