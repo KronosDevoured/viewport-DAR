@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Stake Rig, Dir-Dependent Spin</title>
+<title>DAR Rings — Numeric Heights, Big Circle when OFF</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
   header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.6rem .8rem;padding:.6rem .8rem;background:#12161d;border-bottom:1px solid #1f2530}
   .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 980px;min-width:0}
-  .sliderBlock{display:flex;flex-direction:column;gap:.25rem;flex:1 1 220px;min-width:160px}
-  .sliderBlock label{font-size:.9rem;opacity:.9}
-  .sliderBlock input[type=range]{flex:1;min-width:80px}
-  .sliderBlock .tag{margin-top:.1rem;align-self:center;white-space:nowrap}
+  .control{display:flex;flex-direction:column;gap:.25rem;flex:1 1 220px;min-width:180px}
+  .control label{font-size:.9rem;opacity:.9}
+  .control input[type=number]{background:#0f141c;border:1px solid #2a3342;color:#e7ecf3;border-radius:8px;padding:.35rem .5rem;font-size:.95rem}
+  .control input[type=range]{flex:1;min-width:80px}
+  .tag{margin-top:.1rem;align-self:flex-start;white-space:nowrap;font-size:.82rem;opacity:.9}
   .actions{display:flex;gap:.5rem;flex:0 0 auto}
   button{border:1px solid #2a3342;background:#151b24;color:#e7ecf3;border-radius:10px;padding:.35rem .6rem;font-weight:600}
   .toggle{border:1px solid #2a3342;background:#0f141c;border-radius:10px;display:flex;overflow:hidden}
@@ -33,29 +34,29 @@
 <div id="wrap">
   <header>
     <div class="sl">
-      <div class="sliderBlock">
+      <div class="control">
         <label for="morph">Morph (stick)</label>
         <input id="morph" type="range" min="0" max="1" step="0.001" value="0" disabled>
         <span id="morphTag" class="tag">0.000</span>
       </div>
-      <div class="sliderBlock">
+      <div class="control">
         <label for="alpha">End Cone</label>
         <input id="alpha" type="range" min="5" max="60" step="1" value="30">
         <span id="alphaTag" class="tag">30°</span>
       </div>
-      <div class="sliderBlock">
+      <div class="control">
         <label for="carSize">Car Size</label>
         <input id="carSize" type="range" min="0.005" max="0.08" step="0.001" value="0.010">
         <span id="carSizeTag" class="tag">0.010</span>
       </div>
-      <div class="sliderBlock">
-        <label for="rodHeight">Rod Height</label>
-        <input id="rodHeight" type="range" min="-3.0" max="3.0" step="0.001" value="-0.200">
+      <div class="control">
+        <label for="rodHeight">Rod Height (±100)</label>
+        <input id="rodHeight" type="number" min="-100" max="100" step="0.001" value="-0.200">
         <span id="rodHeightTag" class="tag">-0.200</span>
       </div>
-      <div class="sliderBlock">
-        <label for="carHeight">Car Height (mesh offset)</label>
-        <input id="carHeight" type="range" min="-15.0" max="15.0" step="0.001" value="-0.200">
+      <div class="control">
+        <label for="carHeight">Mesh Height (offset, ±100)</label>
+        <input id="carHeight" type="number" min="-100" max="100" step="0.001" value="-0.200">
         <span id="carHeightTag" class="tag">-0.200</span>
       </div>
     </div>
@@ -80,7 +81,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Guides always on. m&gt;0 overlays DAR circle. Car center fixed to rod. Roll follows arc. ARL/ARR toggle and set spin direction. Deadzone=0.08. Stick colors +45° CW.</div>
+    <div class="hint">DAR OFF: stick shows one big great circle and car follows it (no roll). DAR ON: small circle + roll with ARL/ARR direction. Heights accept direct numbers (±100). Deadzone=0.08.</div>
   </div>
 </div>
 
@@ -130,7 +131,7 @@ for(let i=0;i<4;i++){ const g=new THREE.BufferGeometry(); g.setAttribute('positi
 function greatCirclePerAxis(axis,arr){ const {u,v}=framePerp(axis); for(let k=0;k<=RING_SEGS;k++){ const t=(k/RING_SEGS)*Math.PI*2; const p=u.clone().multiplyScalar(Math.cos(t)).add(v.clone().multiplyScalar(Math.sin(t))); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
 function drawGreatCircles(){ for(const r of rings){ greatCirclePerAxis(r.axis,r.cur); r.line.visible=true; r.line.geometry.attributes.position.needsUpdate=true; } }
 
-/* active DAR circle */
+/* active line (white) reused for big or small circle */
 const activeGeo=new THREE.BufferGeometry(); activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
 const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true})); activeLine.visible=false; scene.add(activeLine);
 
@@ -145,22 +146,16 @@ let carScale=0.010, rodHeight=-0.200, carHeight=-0.200;
 carRoot.position.set(0,rodHeight,0);
 carOffset.position.y = carHeight - rodHeight;
 
-// fallback box if model missing
+// fallback if model missing
 const fallback=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.24,0.8), new THREE.MeshStandardMaterial({color:0x8899aa,metalness:0.1,roughness:0.8,transparent:true,opacity:0.95}));
 fallback.visible=true; carOffset.add(fallback);
 
-// load car
-function alignForwardToZ(obj, from='X'){ const map={X:new THREE.Vector3(1,0,0),'-X':new THREE.Vector3(-1,0,0),Y:new THREE.Vector3(0,1,0),'-Y':new THREE.Vector3(0,-1,0),Z:new THREE.Vector3(0,0,1),'-Z':new THREE.Vector3(0,0,-1)}; const q=new THREE.Quaternion().setFromUnitVectors(map[from]||map.X,new THREE.Vector3(0,0,1)); obj.quaternion.premultiply(q); }
-new GLTFLoader().load("models/car.glb",(gltf)=>{
-  carMesh=gltf.scene;
-  alignForwardToZ(carMesh,'X');  // adjust if needed
-  carOffset.add(carMesh);
-  fallback.visible=false;
-  setCarScale(carScale);
-});
+// load model (+X -> +Z forward by default)
+function alignForwardToZ(obj, from='X'){ const axes={X:new THREE.Vector3(1,0,0),'-X':new THREE.Vector3(-1,0,0),Y:new THREE.Vector3(0,1,0),'-Y':new THREE.Vector3(0,-1,0),Z:new THREE.Vector3(0,0,1),'-Z':new THREE.Vector3(0,0,-1)}; const q=new THREE.Quaternion().setFromUnitVectors(axes[from]||axes.X,new THREE.Vector3(0,0,1)); obj.quaternion.premultiply(q); }
+new GLTFLoader().load("models/car.glb",(gltf)=>{ carMesh=gltf.scene; alignForwardToZ(carMesh,'X'); carOffset.add(carMesh); fallback.visible=false; setCarScale(carScale); });
 function setCarScale(s){ carSpin.scale.setScalar(s); }
 
-/* stake from rod anchor to nose target */
+/* stake line */
 const stakeGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]);
 const stake=new THREE.Line(stakeGeo,new THREE.LineBasicMaterial({color:0x9aa6bd,transparent:true,opacity:0.9}));
 scene.add(stake);
@@ -169,7 +164,7 @@ scene.add(stake);
 const noseMarker=new THREE.Mesh(new THREE.SphereGeometry(0.02,16,12), new THREE.MeshBasicMaterial({color:0xffffff}));
 scene.add(noseMarker);
 
-/* UI */
+/* UI refs */
 const morph=document.getElementById('morph'), morphTag=document.getElementById('morphTag');
 const alphaSlider=document.getElementById('alpha'), alphaTag=document.getElementById('alphaTag');
 const carSize=document.getElementById('carSize'), carSizeTag=document.getElementById('carSizeTag');
@@ -178,17 +173,37 @@ const rodHeightEl=document.getElementById('rodHeight'), rodHeightTag=document.ge
 const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr');
 
 let endConeDeg=+alphaSlider.value;
-let darMode='OFF'; // 'OFF' | 'ARL' | 'ARR'
+let darMode='OFF'; // OFF | ARL | ARR
 
 alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
 carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); setCarScale(carScale); });
-rodHeightEl.addEventListener('input',()=>{ rodHeight=+rodHeightEl.value; rodHeightTag.textContent=rodHeight.toFixed(3); carRoot.position.y=rodHeight; carOffset.position.y = carHeight - rodHeight; });
-carHeightEl.addEventListener('input',()=>{ carHeight=+carHeightEl.value; carHeightTag.textContent=carHeight.toFixed(3); carOffset.position.y = carHeight - rodHeight; });
+
+function clampNumInput(el,min,max){
+  const v=parseFloat(el.value);
+  if(Number.isNaN(v)) return;
+  if(v<min) el.value=String(min);
+  if(v>max) el.value=String(max);
+}
+function applyHeights(){
+  clampNumInput(rodHeightEl,-100,100);
+  clampNumInput(carHeightEl,-100,100);
+  rodHeight=parseFloat(rodHeightEl.value);
+  carHeight=parseFloat(carHeightEl.value);
+  rodHeightTag.textContent=rodHeight.toFixed(3);
+  carHeightTag.textContent=carHeight.toFixed(3);
+  carRoot.position.y=rodHeight;
+  carOffset.position.y=carHeight-rodHeight;
+}
+rodHeightEl.addEventListener('change',applyHeights);
+rodHeightEl.addEventListener('input',applyHeights);
+carHeightEl.addEventListener('change',applyHeights);
+carHeightEl.addEventListener('input',applyHeights);
+applyHeights();
 
 btnARL.addEventListener('click',()=>{
   const active = btnARL.getAttribute('aria-pressed')==='true';
   if(active){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); }
-  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); }
+  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false'); }
 });
 btnARR.addEventListener('click',()=>{
   const active = btnARR.getAttribute('aria-pressed')==='true';
@@ -198,7 +213,7 @@ btnARR.addEventListener('click',()=>{
 
 document.getElementById('reset').addEventListener('click',()=>{
   camera.position.set(2.3,1.6,2.5); controls.target.set(0,0,0); controls.update();
-  cfCurrent=null; phase=0; lastPoint=null; phaseZero=0;
+  cfCurrent=null; bcCurrent=null; phase=0; lastPoint=null; phaseZero=0;
   morph.value="0"; morphTag.textContent="0.000";
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
 });
@@ -231,8 +246,14 @@ function circleFrame(alpha,phi){
 function pointOnCircle(cf,t){ return cf.c.clone().multiplyScalar(cf.ca).add(cf.u.clone().multiplyScalar(Math.cos(t)*cf.sa)).add(cf.v.clone().multiplyScalar(Math.sin(t)*cf.sa)); }
 function drawCircle(cf,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=cf.t0+(k/RING_SEGS)*Math.PI*2; const p=pointOnCircle(cf,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
 
+/* Big great-circle helpers for DAR OFF */
+function bigCircleFromAxis(axis){ const {u,v}=framePerp(axis); return {u,v}; }
+function pointOnBigCircle(bc,t){ return bc.u.clone().multiplyScalar(Math.cos(t)).add(bc.v.clone().multiplyScalar(Math.sin(t))); }
+function drawBigCircle(bc,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=(k/RING_SEGS)*Math.PI*2; const p=pointOnBigCircle(bc,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
+
 /* state */
 let cfCurrent=null, phase=0, lastPoint=null, lastTime=performance.now(), phaseZero=0;
+let bcCurrent=null;
 
 /* color rotation only when m>0 */
 function applyColorRotation(m){
@@ -267,15 +288,42 @@ function update(dt){
 
     carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
     carSpin.quaternion.identity();
+    drawStick(); return;
+  }
 
-    const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,idleTarget.x,idleTarget.y,idleTarget.z); pa.needsUpdate=true;
+  if(darMode==='OFF'){
+    let axis=new THREE.Vector3(stickX, stickY, 0);
+    if(axis.lengthSq()<1e-6) axis.set(1,0,0);
+    axis.normalize();
 
+    const prevPoint=(bcCurrent ? pointOnBigCircle(bcCurrent,phase) : (lastPoint || new THREE.Vector3(0,0,1)));
+    const bc=bigCircleFromAxis(axis);
+
+    drawBigCircle(bc, activeGeo.attributes.position.array);
+    activeGeo.attributes.position.needsUpdate=true;
+    activeLine.visible=true;
+
+    const x=prevPoint.dot(bc.u), y=prevPoint.dot(bc.v);
+    phase=Math.atan2(y,x);
+    const speed=angVelBase; phase+=speed*dt;
+    bcCurrent=bc;
+
+    const noseTarget=pointOnBigCircle(bcCurrent,phase);
+    lastPoint=noseTarget.clone();
+    noseMarker.position.copy(noseTarget);
+
+    const stakeDir=noseTarget.clone().sub(rodAnchor).normalize();
+    carRoot.position.copy(rodAnchor);
+    carOffset.position.y = carHeight - rodHeight;
+    carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
+    carSpin.quaternion.identity();
+
+    const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
     drawStick(); return;
   }
 
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
-
   let phi=Math.atan2(stickY,stickX);
   if(darMode==='ARL') phi+=Math.PI/2;
   if(darMode==='ARR') phi-=Math.PI;
@@ -286,15 +334,14 @@ function update(dt){
 
   const center=cf.c.clone().multiplyScalar(cf.ca);
   const q=prevPoint.clone().normalize().sub(center);
-  const x=q.dot(cf.u), y=q.dot(cf.v);
-  phase=Math.atan2(y,x);
+  const x2=q.dot(cf.u), y2=q.dot(cf.v);
+  phase=Math.atan2(y2,x2);
 
   phaseZero=cf.t0;
-
   const speed=angVelBase*(0.3+0.7*(alpha/aMax));
   phase+=speed*dt;
 
-  cfCurrent=cf;
+  cfCurrent=cf; bcCurrent=null;
 
   const noseTarget=pointOnCircle(cfCurrent,phase);
   lastPoint=noseTarget.clone();
@@ -307,7 +354,6 @@ function update(dt){
 
   carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
 
-  // spin direction depends on DAR: ARL = +1, ARR = -1, OFF = +1
   const spinDir = (darMode==='ARR') ? -1 : 1;
   const rollAngle = spinDir * (phase - phaseZero);
   carSpin.quaternion.setFromAxisAngle(new THREE.Vector3(0,0,1), rollAngle);
