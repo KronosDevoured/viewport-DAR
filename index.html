@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Clamped Car, No Reset, CCW Stick</title>
+<title>DAR Rings — Clamped Car, Spin Demo, Guides + Stick</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -12,7 +12,7 @@
     display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;
     gap:.6rem .8rem;padding:.6rem .8rem;background:#12161d;border-bottom:1px solid #1f2530;
   }
-  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 560px;min-width:0}
+  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 680px;min-width:0}
   .sliderBlock{display:flex;flex-direction:column;gap:.25rem;flex:1 1 200px;min-width:160px}
   .sliderBlock label{font-size:.9rem;opacity:.9}
   .sliderBlock input[type=range]{flex:1;min-width:80px}
@@ -47,13 +47,18 @@
       </div>
       <div class="sliderBlock">
         <label for="alpha">End Cone</label>
-        <input id="alpha" type="range" min="5" max="60" step="1" value="28">
-        <span id="alphaTag" class="tag">28°</span>
+        <input id="alpha" type="range" min="5" max="60" step="1" value="30">
+        <span id="alphaTag" class="tag">30°</span>
       </div>
       <div class="sliderBlock">
         <label for="carSize">Car Size</label>
-        <input id="carSize" type="range" min="0.005" max="0.08" step="0.001" value="0.020">
-        <span id="carSizeTag" class="tag">0.020</span>
+        <input id="carSize" type="range" min="0.005" max="0.08" step="0.001" value="0.010">
+        <span id="carSizeTag" class="tag">0.010</span>
+      </div>
+      <div class="sliderBlock">
+        <label for="carHeight">Car Height</label>
+        <input id="carHeight" type="range" min="-0.2" max="0.2" step="0.001" value="-0.020">
+        <span id="carHeightTag" class="tag">-0.020</span>
       </div>
     </div>
 
@@ -78,7 +83,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Car stays at origin. Nose aims at pivot when idle and tracks DAR circle when m&gt;0. Stick colors are 90° CCW. Deadzone=0.08.</div>
+    <div class="hint">Four great circles are always visible. m&gt;0 adds a DAR circle. Car is clamped at origin, nose aims at DAR point, and spins in-place to demo tornado. Deadzone=0.08.</div>
   </div>
 </div>
 
@@ -118,7 +123,7 @@ scene.add(new THREE.AxesHelper(1.25));
 const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
 pivot.position.set(0,0,1); scene.add(pivot);
 
-/* ---------- rings ---------- */
+/* ---------- rings (always drawn) ---------- */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
 const baseMats=[ // fadeable
   new THREE.LineBasicMaterial({color:0xff5c5c, transparent:true, opacity:0.9}), // +Y
@@ -158,15 +163,19 @@ function drawGreatCircles(){
   }
 }
 
+/* Active DAR circle */
 const activeGeo=new THREE.BufferGeometry();
 activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
 const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true}));
 activeLine.visible=false; scene.add(activeLine);
 
-/* ---------- car at origin (orientation only) ---------- */
-const carRig=new THREE.Group(); carRig.position.set(0,0,0); scene.add(carRig);
+/* ---------- car at origin, with size + height sliders, spins when DAR active ---------- */
+const carRig=new THREE.Group();
+scene.add(carRig);
 let carMesh=null;
-let carScale=0.020;
+let carScale=0.010;          // default
+let carHeight=-0.020;        // default down a bit
+carRig.position.set(0,carHeight,0);
 
 function alignForwardToZ(obj, from='X'){
   const map={ 'X':new THREE.Vector3(1,0,0), '-X':new THREE.Vector3(-1,0,0),
@@ -179,12 +188,12 @@ function alignForwardToZ(obj, from='X'){
 
 new GLTFLoader().load("models/car.glb",(gltf)=>{
   carMesh=gltf.scene;
-  carRig.add(carMesh);
   alignForwardToZ(carMesh,'X');      // mesh forward +X -> rig +Z
+  carRig.add(carMesh);
   carRig.scale.setScalar(carScale);
 });
 
-/* Nose target marker */
+/* Nose marker (target point) */
 const noseMarker=new THREE.Mesh(new THREE.SphereGeometry(0.02,16,12), new THREE.MeshBasicMaterial({color:0xffffff}));
 scene.add(noseMarker);
 
@@ -192,10 +201,14 @@ scene.add(noseMarker);
 const morph=document.getElementById('morph'), morphTag=document.getElementById('morphTag');
 const alphaSlider=document.getElementById('alpha'), alphaTag=document.getElementById('alphaTag');
 const carSize=document.getElementById('carSize'), carSizeTag=document.getElementById('carSizeTag');
+const carHeightEl=document.getElementById('carHeight'), carHeightTag=document.getElementById('carHeightTag');
 const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr');
+
 let endConeDeg=+alphaSlider.value, darMode='OFF';
 alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
 carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); carRig.scale.setScalar(carScale); });
+carHeightEl.addEventListener('input',()=>{ carHeight=+carHeightEl.value; carHeightTag.textContent=carHeight.toFixed(3); carRig.position.y=carHeight; });
+
 btnARL.addEventListener('click',()=>{ if(darMode==='ARL'){darMode='OFF';btnARL.setAttribute('aria-pressed','false');} else{darMode='ARL';btnARL.setAttribute('aria-pressed','true');btnARR.setAttribute('aria-pressed','false');}});
 btnARR.addEventListener('click',()=>{ if(darMode==='ARR'){darMode='OFF';btnARR.setAttribute('aria-pressed','false');} else{darMode='ARR';btnARR.setAttribute('aria-pressed','true');btnARL.setAttribute('aria-pressed','false');}});
 
@@ -205,9 +218,10 @@ document.getElementById('reset').addEventListener('click',()=>{
   controls.update();
   cfCurrent=null; phase=0; lastPoint=null;
   morph.value="0"; morphTag.textContent="0.000";
+  darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
 });
 
-/* ---------- input + on-screen stick (90° CCW colors) ---------- */
+/* ---------- input + on-screen stick (colors rotated 45° CW) ---------- */
 let stickX=0, stickY=0; const DEADZONE=0.08;
 function dz(v){ return Math.abs(v)<DEADZONE?0:v; }
 function pollGamepad(){
@@ -224,6 +238,9 @@ const sctx=stickCanvas.getContext('2d');
 const DPR=Math.min(devicePixelRatio||1,2);
 stickCanvas.width=120*DPR; stickCanvas.height=120*DPR;
 stickCanvas.style.width='120px'; stickCanvas.style.height='120px';
+
+/* rotate color quadrants by +45° (clockwise) */
+const THETA_SHIFT = -Math.PI/4; // CW
 function drawStick(){
   const ctx=sctx, w=stickCanvas.width, h=stickCanvas.height, cx=w/2, cy=h/2;
   const R=Math.min(w,h)*0.45;
@@ -233,12 +250,11 @@ function drawStick(){
   ctx.beginPath(); ctx.arc(cx,cy,R*DEADZONE,0,Math.PI*2);
   ctx.strokeStyle='#3a4557'; ctx.setLineDash([4*DPR,4*DPR]); ctx.stroke(); ctx.setLineDash([]);
 
-  /* 90° CCW mapping */
   const arcs=[
-    {start:Math.PI, end:1.5*Math.PI, color:'#ff5c5c'},   // Up -> left
-    {start:0, end:Math.PI/2, color:'#53d769'},          // Down -> right
-    {start:-Math.PI/2, end:0, color:'#4c8dff'},         // Right -> top
-    {start:Math.PI/2, end:Math.PI, color:'#ffd166'}     // Left -> bottom
+    {start:-Math.PI/2+THETA_SHIFT, end:0+THETA_SHIFT, color:'#ff5c5c'},   // Up (red)
+    {start: Math.PI/2+THETA_SHIFT, end:Math.PI+THETA_SHIFT, color:'#53d769'}, // Down (green)
+    {start:0+THETA_SHIFT, end:Math.PI/2+THETA_SHIFT, color:'#4c8dff'},    // Right (blue)
+    {start:Math.PI+THETA_SHIFT, end:1.5*Math.PI+THETA_SHIFT, color:'#ffd166'} // Left (orange)
   ];
   ctx.lineWidth=3*DPR;
   for(const a of arcs){ ctx.beginPath(); ctx.arc(cx,cy,R,a.start,a.end); ctx.strokeStyle=a.color; ctx.stroke(); }
@@ -278,7 +294,7 @@ function drawCircle(cf, arrOut){
 /* ---------- state ---------- */
 let cfCurrent=null, phase=0, lastPoint=null, lastTime=performance.now();
 
-/* Colors: base at m==0; rotate only when m>0 */
+/* colors: base at m==0; rotate only when m>0 */
 function applyColorRotation(m){
   for(let i=0;i<4;i++) rings[i].line.material=baseMats[i];
   if(m<=EPS) return;
@@ -295,6 +311,9 @@ function applyColorRotation(m){
 
 /* ---------- update (no resets) ---------- */
 const angVelBase=1.8;
+let spinAngle=0;                 // tornado spin angle
+const spinSpeed=4.0;             // rad/s while DAR active
+
 function update(dt){
   pollGamepad();
 
@@ -304,7 +323,7 @@ function update(dt){
 
   applyColorRotation(m);
 
-  // guides always on, fade with m
+  // guides always visible
   const guideOpacity = m>EPS ? 0.35 : 0.9;
   for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=guideOpacity; }
 
@@ -313,19 +332,19 @@ function update(dt){
     drawGreatCircles();
 
     // Nose to pivot
-    const idleTarget = new THREE.Vector3(0,0,1);
+    const idleTarget = new THREE.Vector3(0,1,0).set(0,0,1);
     noseMarker.position.copy(idleTarget);
-    carRig.position.set(0,0,0);
-    carRig.lookAt(idleTarget);
-
-    // preserve lastPoint for smooth entry when m rises
-    lastPoint = idleTarget.clone();
+    // Orient car to idle target with no spin
+    const forward = idleTarget.clone().sub(new THREE.Vector3(0,carHeight,0)).normalize();
+    const baseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), forward);
+    carRig.quaternion.copy(baseQ);
+    carRig.position.set(0,carHeight,0);
 
     drawStick();
     return;
   }
 
-  // compute current target circle frame from stick
+  // circle from stick
   const aMin=THREE.MathUtils.degToRad(0.001);
   const aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
@@ -334,33 +353,41 @@ function update(dt){
   if(darMode==='ARL') phi+=Math.PI/2;
   if(darMode==='ARR') phi-=Math.PI;
 
-  // previous nose point before changing frame (for continuity)
+  // continuity: previous target before updating frame
   const prevPoint = (cfCurrent ? pointOnCircle(cfCurrent, phase) : (lastPoint || new THREE.Vector3(0,0,1)));
 
-  // new frame
   const cf=circleFrame(alpha,phi);
   drawCircle(cf, activeGeo.attributes.position.array);
   activeGeo.attributes.position.needsUpdate=true;
   activeLine.visible=true;
 
-  // reproject previous point onto new circle for continuous phase
+  // reproject prev point to new circle for continuous phase
   const center=cf.c.clone().multiplyScalar(cf.ca);
   const q=prevPoint.clone().normalize().sub(center);
   const x=q.dot(cf.u), y=q.dot(cf.v);
   phase = Math.atan2(y,x);
 
-  // advance
+  // advance around circle
   const speed = angVelBase * (0.3 + 0.7 * (alpha/aMax));
   phase += speed * dt;
 
   cfCurrent = cf;
 
-  // target nose point and car orientation (car stays at origin)
+  // target point on circle (nose)
   const noseTarget = pointOnCircle(cfCurrent, phase);
   lastPoint = noseTarget.clone();
   noseMarker.position.copy(noseTarget);
-  carRig.position.set(0,0,0);
-  carRig.lookAt(noseTarget);
+
+  // car stays at origin + height; aim nose to target; add tornado spin around forward
+  const carBasePos = new THREE.Vector3(0,carHeight,0);
+  const forward = noseTarget.clone().sub(carBasePos).normalize(); // from car center to target
+  const baseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), forward);
+
+  spinAngle += spinSpeed * dt; // continuous spin while DAR active
+  const qRoll = new THREE.Quaternion().setFromAxisAngle(forward, spinAngle);
+
+  carRig.quaternion.copy(baseQ).multiply(qRoll);
+  carRig.position.copy(carBasePos);
 
   drawStick();
 }
@@ -374,6 +401,8 @@ function tick(){
   renderer.render(scene,camera);
   requestAnimationFrame(tick);
 }
+
+/* boot */
 drawGreatCircles();
 tick();
 
@@ -384,6 +413,15 @@ addEventListener('resize',()=>{
   camera.aspect=renderer.domElement.width/renderer.domElement.height;
   camera.updateProjectionMatrix();
 });
+
+/* ---------- controls / state ---------- */
+let endConeDeg=+alphaSlider.value, darMode='OFF';
+function applyInitialUI(){
+  alphaTag.textContent=endConeDeg+'°';
+  carSizeTag.textContent=carScale.toFixed(3);
+  carHeightTag.textContent=carHeight.toFixed(3);
+}
+applyInitialUI();
 </script>
 </body>
 </html>
