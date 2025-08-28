@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Clamped Car + CCW Stick</title>
+<title>DAR Rings — Clamped Car, No Reset, CCW Stick</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -78,7 +78,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Car stays at origin. Nose points to pivot at rest and to DAR circle when m&gt;0. Stick colors are 90° CCW. Deadzone=0.08.</div>
+    <div class="hint">Car stays at origin. Nose aims at pivot when idle and tracks DAR circle when m&gt;0. Stick colors are 90° CCW. Deadzone=0.08.</div>
   </div>
 </div>
 
@@ -102,7 +102,6 @@ camera.position.set(2.3,1.6,2.5);
 const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;
 
-/* Lights */
 scene.add(new THREE.HemisphereLight(0xd9e6ff,0x17202c,0.9));
 const dl=new THREE.DirectionalLight(0xffffff,0.6); dl.position.set(2,3,1); scene.add(dl);
 
@@ -112,17 +111,16 @@ const refSphere=new THREE.Mesh(
   new THREE.MeshPhongMaterial({color:0x0e141d,specular:0x111111,shininess:10,transparent:true,opacity:0.25})
 );
 scene.add(refSphere);
-
 const grid=new THREE.GridHelper(8,16,0x2a3342,0x1d2430); grid.position.y=-1.25; scene.add(grid);
 scene.add(new THREE.AxesHelper(1.25));
 
-/* Pivot marker at north pole */
+/* Pivot (north pole) */
 const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
 pivot.position.set(0,0,1); scene.add(pivot);
 
 /* ---------- rings ---------- */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
-const baseMats=[ // transparent to allow fade
+const baseMats=[ // fadeable
   new THREE.LineBasicMaterial({color:0xff5c5c, transparent:true, opacity:0.9}), // +Y
   new THREE.LineBasicMaterial({color:0x53d769, transparent:true, opacity:0.9}), // -Y
   new THREE.LineBasicMaterial({color:0x4c8dff, transparent:true, opacity:0.9}), // +X
@@ -137,7 +135,6 @@ function framePerp(a){
   const v=a.clone().cross(u).normalize();
   return {u,v};
 }
-
 const rings=[];
 for(let i=0;i<4;i++){
   const geo=new THREE.BufferGeometry();
@@ -166,48 +163,47 @@ activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N
 const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true}));
 activeLine.visible=false; scene.add(activeLine);
 
-/* ---------- car ---------- */
-/* Car stays at origin; only rotates to face the target point on the circle */
-const carRig=new THREE.Group();
-carRig.position.set(0,0,0); // clamp to origin
-scene.add(carRig);
-
+/* ---------- car at origin (orientation only) ---------- */
+const carRig=new THREE.Group(); carRig.position.set(0,0,0); scene.add(carRig);
 let carMesh=null;
 let carScale=0.020;
+
+function alignForwardToZ(obj, from='X'){
+  const map={ 'X':new THREE.Vector3(1,0,0), '-X':new THREE.Vector3(-1,0,0),
+              'Y':new THREE.Vector3(0,1,0), '-Y':new THREE.Vector3(0,-1,0),
+              'Z':new THREE.Vector3(0,0,1), '-Z':new THREE.Vector3(0,0,-1) };
+  const v=map[from]||map['X'];
+  const q=new THREE.Quaternion().setFromUnitVectors(v,new THREE.Vector3(0,0,1));
+  obj.quaternion.premultiply(q);
+}
+
 new GLTFLoader().load("models/car.glb",(gltf)=>{
   carMesh=gltf.scene;
   carRig.add(carMesh);
+  alignForwardToZ(carMesh,'X');      // mesh forward +X -> rig +Z
   carRig.scale.setScalar(carScale);
 });
 
-/* Optional: visualize the nose target */
+/* Nose target marker */
 const noseMarker=new THREE.Mesh(new THREE.SphereGeometry(0.02,16,12), new THREE.MeshBasicMaterial({color:0xffffff}));
-noseMarker.visible=true; scene.add(noseMarker);
+scene.add(noseMarker);
 
 /* ---------- UI ---------- */
 const morph=document.getElementById('morph'), morphTag=document.getElementById('morphTag');
 const alphaSlider=document.getElementById('alpha'), alphaTag=document.getElementById('alphaTag');
 const carSize=document.getElementById('carSize'), carSizeTag=document.getElementById('carSizeTag');
 const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr');
-
 let endConeDeg=+alphaSlider.value, darMode='OFF';
 alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
 carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); carRig.scale.setScalar(carScale); });
-
-btnARL.addEventListener('click',()=>{
-  if(darMode==='ARL'){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); }
-  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); }
-});
-btnARR.addEventListener('click',()=>{
-  if(darMode==='ARR'){ darMode='OFF'; btnARR.setAttribute('aria-pressed','false'); }
-  else{ darMode='ARR'; btnARR.setAttribute('aria-pressed','true'); btnARL.setAttribute('aria-pressed','false'); }
-});
+btnARL.addEventListener('click',()=>{ if(darMode==='ARL'){darMode='OFF';btnARL.setAttribute('aria-pressed','false');} else{darMode='ARL';btnARL.setAttribute('aria-pressed','true');btnARR.setAttribute('aria-pressed','false');}});
+btnARR.addEventListener('click',()=>{ if(darMode==='ARR'){darMode='OFF';btnARR.setAttribute('aria-pressed','false');} else{darMode='ARR';btnARR.setAttribute('aria-pressed','true');btnARL.setAttribute('aria-pressed','false');}});
 
 document.getElementById('reset').addEventListener('click',()=>{
   camera.position.set(2.3,1.6,2.5);
   controls.target.set(0,0,0);
   controls.update();
-  haveCircle=false; cfCurrent=null; lastPos=null; phase=0;
+  cfCurrent=null; phase=0; lastPoint=null;
   morph.value="0"; morphTag.textContent="0.000";
 });
 
@@ -223,40 +219,31 @@ function pollGamepad(){
     return;
   }
 }
-
 const stickCanvas=document.getElementById('stick');
 const sctx=stickCanvas.getContext('2d');
 const DPR=Math.min(devicePixelRatio||1,2);
 stickCanvas.width=120*DPR; stickCanvas.height=120*DPR;
 stickCanvas.style.width='120px'; stickCanvas.style.height='120px';
-
 function drawStick(){
   const ctx=sctx, w=stickCanvas.width, h=stickCanvas.height, cx=w/2, cy=h/2;
   const R=Math.min(w,h)*0.45;
   ctx.clearRect(0,0,w,h);
-
-  // base circle
   ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
   ctx.strokeStyle='#2a3342'; ctx.lineWidth=2*DPR; ctx.stroke();
-
-  // deadzone
   ctx.beginPath(); ctx.arc(cx,cy,R*DEADZONE,0,Math.PI*2);
   ctx.strokeStyle='#3a4557'; ctx.setLineDash([4*DPR,4*DPR]); ctx.stroke(); ctx.setLineDash([]);
 
-  // Quadrant arcs rotated 90° CCW:
-  // Up (red) on LEFT quadrant, Down (green) on RIGHT, Right (blue) on TOP, Left (orange) on BOTTOM.
+  /* 90° CCW mapping */
   const arcs=[
-    {start:Math.PI, end:1.5*Math.PI, color:'#ff5c5c'},   // Up -> left quadrant
-    {start:0, end:Math.PI/2, color:'#53d769'},          // Down -> right quadrant
-    {start:-Math.PI/2, end:0, color:'#4c8dff'},         // Right -> top quadrant
-    {start:Math.PI/2, end:Math.PI, color:'#ffd166'}     // Left -> bottom quadrant
+    {start:Math.PI, end:1.5*Math.PI, color:'#ff5c5c'},   // Up -> left
+    {start:0, end:Math.PI/2, color:'#53d769'},          // Down -> right
+    {start:-Math.PI/2, end:0, color:'#4c8dff'},         // Right -> top
+    {start:Math.PI/2, end:Math.PI, color:'#ffd166'}     // Left -> bottom
   ];
   ctx.lineWidth=3*DPR;
   for(const a of arcs){ ctx.beginPath(); ctx.arc(cx,cy,R,a.start,a.end); ctx.strokeStyle=a.color; ctx.stroke(); }
 
-  // knob
-  const kx=cx + stickX*R;
-  const ky=cy - stickY*R;
+  const kx=cx + stickX*R, ky=cy - stickY*R;
   ctx.beginPath(); ctx.arc(kx,ky,6*DPR,0,Math.PI*2);
   ctx.fillStyle='#e7ecf3'; ctx.fill();
   ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
@@ -289,20 +276,10 @@ function drawCircle(cf, arrOut){
 }
 
 /* ---------- state ---------- */
-let cfCurrent=null, phase=0, lastPos=null, haveCircle=false, lastTime=performance.now();
+let cfCurrent=null, phase=0, lastPoint=null, lastTime=performance.now();
 
-/* continuity */
-function reprojectPhase(cf){
-  const pRef=lastPos?lastPos.clone().normalize():pointOnCircle(cf,cf.t0);
-  const center=cf.c.clone().multiplyScalar(cf.ca);
-  const q=pRef.clone().sub(center);
-  const x=q.dot(cf.u), y=q.dot(cf.v);
-  return Math.atan2(y,x);
-}
-
-/* colors: base at m==0; rotate only when m>0 */
+/* Colors: base at m==0; rotate only when m>0 */
 function applyColorRotation(m){
-  // reset
   for(let i=0;i<4;i++) rings[i].line.material=baseMats[i];
   if(m<=EPS) return;
   let shift=0;
@@ -316,7 +293,7 @@ function applyColorRotation(m){
   }
 }
 
-/* ---------- update ---------- */
+/* ---------- update (no resets) ---------- */
 const angVelBase=1.8;
 function update(dt){
   pollGamepad();
@@ -327,55 +304,63 @@ function update(dt){
 
   applyColorRotation(m);
 
-  // Fade guides when m>0
+  // guides always on, fade with m
   const guideOpacity = m>EPS ? 0.35 : 0.9;
   for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=guideOpacity; }
+
   if(m<=EPS){
     activeLine.visible=false;
     drawGreatCircles();
-    haveCircle=false;
 
-    // Nose points to pivot when idle
-    const idleTarget=new THREE.Vector3(0,0,1);
+    // Nose to pivot
+    const idleTarget = new THREE.Vector3(0,0,1);
     noseMarker.position.copy(idleTarget);
-    if(carRig) carRig.lookAt(idleTarget);
+    carRig.position.set(0,0,0);
+    carRig.lookAt(idleTarget);
+
+    // preserve lastPoint for smooth entry when m rises
+    lastPoint = idleTarget.clone();
 
     drawStick();
     return;
   }
 
+  // compute current target circle frame from stick
   const aMin=THREE.MathUtils.degToRad(0.001);
   const aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
 
-  // Stick azimuth
   let phi=Math.atan2(stickY,stickX);
   if(darMode==='ARL') phi+=Math.PI/2;
   if(darMode==='ARR') phi-=Math.PI;
 
+  // previous nose point before changing frame (for continuity)
+  const prevPoint = (cfCurrent ? pointOnCircle(cfCurrent, phase) : (lastPoint || new THREE.Vector3(0,0,1)));
+
+  // new frame
   const cf=circleFrame(alpha,phi);
   drawCircle(cf, activeGeo.attributes.position.array);
   activeGeo.attributes.position.needsUpdate=true;
   activeLine.visible=true;
 
-  if(!haveCircle||!cfCurrent){ cfCurrent=cf; phase=reprojectPhase(cfCurrent); haveCircle=true; }
-  else{
-    const changed = Math.abs(cfCurrent.ca-cf.ca)>1e-6 || cfCurrent.c.angleTo(cf.c)>1e-4;
-    cfCurrent=cf; if(changed) phase=reprojectPhase(cfCurrent);
-  }
+  // reproject previous point onto new circle for continuous phase
+  const center=cf.c.clone().multiplyScalar(cf.ca);
+  const q=prevPoint.clone().normalize().sub(center);
+  const x=q.dot(cf.u), y=q.dot(cf.v);
+  phase = Math.atan2(y,x);
 
-  // advance along circle
+  // advance
   const speed = angVelBase * (0.3 + 0.7 * (alpha/aMax));
   phase += speed * dt;
 
-  // Target nose point on circle; car stays at origin but looks at this
-  const noseTarget = pointOnCircle(cfCurrent, phase);
-  noseMarker.position.copy(noseTarget);
+  cfCurrent = cf;
 
-  if(carRig){
-    carRig.position.set(0,0,0);        // clamp
-    carRig.lookAt(noseTarget);         // nose aims at circle
-  }
+  // target nose point and car orientation (car stays at origin)
+  const noseTarget = pointOnCircle(cfCurrent, phase);
+  lastPoint = noseTarget.clone();
+  noseMarker.position.copy(noseTarget);
+  carRig.position.set(0,0,0);
+  carRig.lookAt(noseTarget);
 
   drawStick();
 }
@@ -389,7 +374,6 @@ function tick(){
   renderer.render(scene,camera);
   requestAnimationFrame(tick);
 }
-
 drawGreatCircles();
 tick();
 
