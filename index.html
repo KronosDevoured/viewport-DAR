@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Phase-Locked Spin + Tether</title>
+<title>DAR Rings — Stake-Constrained Spin</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -76,7 +76,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Four great circles always on. m&gt;0 overlays one DAR circle. Car stays at origin, nose tracks the circle. Roll equals arc progress. Deadzone=0.08. Stick colors +45° CW.</div>
+    <div class="hint">Guides always on. m&gt;0 overlays DAR circle. Car center fixed; stake to circle point; roll = arc. Deadzone=0.08. Stick colors +45° CW.</div>
   </div>
 </div>
 
@@ -104,25 +104,23 @@ scene.add(new THREE.HemisphereLight(0xd9e6ff,0x17202c,0.9));
 const dl=new THREE.DirectionalLight(0xffffff,0.6); dl.position.set(2,3,1); scene.add(dl);
 
 /* reference sphere + grid */
-const refSphere=new THREE.Mesh(
-  new THREE.SphereGeometry(1,64,48),
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,48),
   new THREE.MeshPhongMaterial({color:0x0e141d,specular:0x111111,shininess:10,transparent:true,opacity:0.25})
-);
-scene.add(refSphere);
+));
 const grid=new THREE.GridHelper(8,16,0x2a3342,0x1d2430); grid.position.y=-1.25; scene.add(grid);
 scene.add(new THREE.AxesHelper(1.25));
 
-/* pivot at north pole */
+/* pivot marker at north pole */
 const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
 pivot.position.set(0,0,1); scene.add(pivot);
 
 /* ---- rings ---- */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
 const baseMats=[
-  new THREE.LineBasicMaterial({color:0xff5c5c,transparent:true,opacity:0.9}), // +Y
-  new THREE.LineBasicMaterial({color:0x53d769,transparent:true,opacity:0.9}), // -Y
-  new THREE.LineBasicMaterial({color:0x4c8dff,transparent:true,opacity:0.9}), // +X
-  new THREE.LineBasicMaterial({color:0xffd166,transparent:true,opacity:0.9})  // -X
+  new THREE.LineBasicMaterial({color:0xff5c5c,transparent:true,opacity:0.9}),
+  new THREE.LineBasicMaterial({color:0x53d769,transparent:true,opacity:0.9}),
+  new THREE.LineBasicMaterial({color:0x4c8dff,transparent:true,opacity:0.9}),
+  new THREE.LineBasicMaterial({color:0xffd166,transparent:true,opacity:0.9})
 ];
 const axesDir=[ new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1,0), new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0) ];
 const phis=axesDir.map(a=>Math.atan2(a.y,a.x));
@@ -133,7 +131,6 @@ function framePerp(a){
   const v=a.clone().cross(u).normalize();
   return {u,v};
 }
-
 const rings=[];
 for(let i=0;i<4;i++){
   const geo=new THREE.BufferGeometry();
@@ -163,33 +160,39 @@ activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N
 const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true}));
 activeLine.visible=false; scene.add(activeLine);
 
-/* ---- car rig at origin (size + height sliders) ---- */
+/* ---- car rig at origin; +Z is nose; strictly rotates about stake ---- */
 const carRig=new THREE.Group(); scene.add(carRig);
 let carMesh=null;
 let carScale=0.010;
-let carHeight=-0.020;
+let carHeight=-0.020;    // slider
 carRig.position.set(0,carHeight,0);
 
-function alignForwardToZ(obj,from='X'){
-  const map={'X':new THREE.Vector3(1,0,0),'-X':new THREE.Vector3(-1,0,0),'Y':new THREE.Vector3(0,1,0),'-Y':new THREE.Vector3(0,-1,0),'Z':new THREE.Vector3(0,0,1),'-Z':new THREE.Vector3(0,0,-1)};
-  const v=map[from]||map['X'];
-  const q=new THREE.Quaternion().setFromUnitVectors(v,new THREE.Vector3(0,0,1));
+/* re-center GLTF to true center, then align its forward to +Z */
+function centerAndAlign(obj){
+  const box=new THREE.Box3().setFromObject(obj);
+  const center=box.getCenter(new THREE.Vector3());
+  obj.traverse(n=>{
+    if(n.isMesh||n.isGroup){ n.position.sub(center); }
+  });
+  const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1,0,0),new THREE.Vector3(0,0,1)); // +X -> +Z
   obj.quaternion.premultiply(q);
 }
 
 new GLTFLoader().load("models/car.glb",(gltf)=>{
   carMesh=gltf.scene;
-  alignForwardToZ(carMesh,'X'); // mesh +X -> rig +Z
+  centerAndAlign(carMesh);
   carRig.add(carMesh);
   carRig.scale.setScalar(carScale);
 });
 
-/* nose marker and tether line */
+/* stake: line from car center to circle point */
+const stakeGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]);
+const stake=new THREE.Line(stakeGeo,new THREE.LineBasicMaterial({color:0x9aa6bd,transparent:true,opacity:0.9}));
+scene.add(stake);
+
+/* nose marker (circle point) */
 const noseMarker=new THREE.Mesh(new THREE.SphereGeometry(0.02,16,12),new THREE.MeshBasicMaterial({color:0xffffff}));
 scene.add(noseMarker);
-const tetherGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]);
-const tether=new THREE.Line(tetherGeo,new THREE.LineBasicMaterial({color:0x9aa6bd,transparent:true,opacity:0.8}));
-scene.add(tether);
 
 /* ---- UI ---- */
 const morph=document.getElementById('morph'), morphTag=document.getElementById('morphTag');
@@ -216,42 +219,34 @@ document.getElementById('reset').addEventListener('click',()=>{
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
 });
 
-/* ---- input + on-screen stick (colors +45° CW) ---- */
+/* ---- input + on-screen stick (+45° CW colors) ---- */
 let stickX=0, stickY=0; const DEADZONE=0.08;
 function dz(v){ return Math.abs(v)<DEADZONE?0:v; }
 function pollGamepad(){
   const pads=navigator.getGamepads?.()||[];
-  for(const gp of pads){
-    if(!gp) continue;
-    stickX=dz(gp.axes[0]||0);
-    stickY=dz(-(gp.axes[1]||0));
-    return;
-  }
+  for(const gp of pads){ if(!gp) continue; stickX=dz(gp.axes[0]||0); stickY=dz(-(gp.axes[1]||0)); return; }
 }
 const stickCanvas=document.getElementById('stick');
 const sctx=stickCanvas.getContext('2d');
 const DPR=Math.min(devicePixelRatio||1,2);
 stickCanvas.width=120*DPR; stickCanvas.height=120*DPR;
 stickCanvas.style.width='120px'; stickCanvas.style.height='120px';
-const THETA_SHIFT=-Math.PI/4; // +45° CW
+const THETA_SHIFT=-Math.PI/4;
 function drawStick(){
   const ctx=sctx, w=stickCanvas.width, h=stickCanvas.height, cx=w/2, cy=h/2;
   const R=Math.min(w,h)*0.45;
   ctx.clearRect(0,0,w,h);
-  ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
-  ctx.strokeStyle='#2a3342'; ctx.lineWidth=2*DPR; ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx,cy,R*DEADZONE,0,Math.PI*2);
-  ctx.strokeStyle='#3a4557'; ctx.setLineDash([4*DPR,4*DPR]); ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.strokeStyle='#2a3342'; ctx.lineWidth=2*DPR; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,R*DEADZONE,0,Math.PI*2); ctx.strokeStyle='#3a4557'; ctx.setLineDash([4*DPR,4*DPR]); ctx.stroke(); ctx.setLineDash([]);
   const arcs=[
-    {start:-Math.PI/2+THETA_SHIFT, end:0+THETA_SHIFT, color:'#ff5c5c'},      // Up
-    {start: Math.PI/2+THETA_SHIFT, end:Math.PI+THETA_SHIFT, color:'#53d769'},// Down
-    {start:0+THETA_SHIFT, end:Math.PI/2+THETA_SHIFT, color:'#4c8dff'},       // Right
-    {start:Math.PI+THETA_SHIFT, end:1.5*Math.PI+THETA_SHIFT, color:'#ffd166'}// Left
+    {start:-Math.PI/2+THETA_SHIFT, end:0+THETA_SHIFT, color:'#ff5c5c'},
+    {start: Math.PI/2+THETA_SHIFT, end:Math.PI+THETA_SHIFT, color:'#53d769'},
+    {start:0+THETA_SHIFT, end:Math.PI/2+THETA_SHIFT, color:'#4c8dff'},
+    {start:Math.PI+THETA_SHIFT, end:1.5*Math.PI+THETA_SHIFT, color:'#ffd166'}
   ];
   ctx.lineWidth=3*DPR; for(const a of arcs){ ctx.beginPath(); ctx.arc(cx,cy,R,a.start,a.end); ctx.strokeStyle=a.color; ctx.stroke(); }
   const kx=cx + stickX*R, ky=cy - stickY*R;
-  ctx.beginPath(); ctx.arc(kx,ky,6*DPR,0,Math.PI*2);
-  ctx.fillStyle='#e7ecf3'; ctx.fill(); ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
+  ctx.beginPath(); ctx.arc(kx,ky,6*DPR,0,Math.PI*2); ctx.fillStyle='#e7ecf3'; ctx.fill(); ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
 }
 
 /* ---- DAR math ---- */
@@ -262,7 +257,7 @@ function circleFrame(alpha,phi){
   const u=tmp.clone().cross(c).normalize();
   const v=c.clone().cross(u).normalize();
   const w=new THREE.Vector3(0,0,1).sub(c.clone().multiplyScalar(ca)).multiplyScalar(1/Math.max(1e-6,sa));
-  const t0=Math.atan2(w.dot(v),w.dot(u)); // north-pole crossing
+  const t0=Math.atan2(w.dot(v),w.dot(u));
   return {c,ca,sa,u,v,t0};
 }
 function pointOnCircle(cf,t){
@@ -280,9 +275,9 @@ function drawCircle(cf,arr){
 
 /* ---- state ---- */
 let cfCurrent=null, phase=0, lastPoint=null, lastTime=performance.now();
-let phaseZero=0; // roll reference tied to circle's t0 or chosen phase
+let phaseZero=0;
 
-/* color rotation only when m>0 */
+/* colors rotate only when m>0 */
 function applyColorRotation(m){
   for(let i=0;i<4;i++) rings[i].line.material=baseMats[i];
   if(m<=EPS) return;
@@ -304,26 +299,31 @@ function update(dt){
   const guideOpacity=m>EPS?0.35:0.9;
   for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=guideOpacity; }
 
-  const carBasePos=new THREE.Vector3(0,carHeight,0);
+  const carCenter=new THREE.Vector3(0,carHeight,0);
 
   if(m<=EPS){
     activeLine.visible=false;
     drawGreatCircles();
     const idleTarget=new THREE.Vector3(0,0,1);
     noseMarker.position.copy(idleTarget);
-    const forward=idleTarget.clone().sub(carBasePos).normalize();
+
+    // Align +Z to stake (carCenter -> idleTarget). No roll.
+    const forward=idleTarget.clone().sub(carCenter).normalize();
     const baseQ=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1),forward);
     carRig.quaternion.copy(baseQ);
-    carRig.position.copy(carBasePos);
-    // tether
-    const pa=tether.geometry.getAttribute('position');
-    pa.setXYZ(0,carBasePos.x,carBasePos.y,carBasePos.z);
+    carRig.position.copy(carCenter);
+
+    // stake
+    const pa=stake.geometry.getAttribute('position');
+    pa.setXYZ(0,carCenter.x,carCenter.y,carCenter.z);
     pa.setXYZ(1,idleTarget.x,idleTarget.y,idleTarget.z);
     pa.needsUpdate=true;
+
     drawStick();
     return;
   }
 
+  // circle from stick
   const aMin=THREE.MathUtils.degToRad(0.001);
   const aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
@@ -338,13 +338,13 @@ function update(dt){
   activeGeo.attributes.position.needsUpdate=true;
   activeLine.visible=true;
 
-  // reproject previous target onto new circle for continuous phase
+  // reproject previous target to new circle
   const center=cf.c.clone().multiplyScalar(cf.ca);
   const q=prevPoint.clone().normalize().sub(center);
   const x=q.dot(cf.u), y=q.dot(cf.v);
   phase=Math.atan2(y,x);
 
-  // choose roll reference. Use circle's t0 so roll=0 at north-pole crossing.
+  // roll reference: north-pole crossing
   phaseZero=cf.t0;
 
   // advance along circle
@@ -353,24 +353,22 @@ function update(dt){
 
   cfCurrent=cf;
 
-  // nose target and orientation
+  // stake target and car rotation
   const noseTarget=pointOnCircle(cfCurrent,phase);
   lastPoint=noseTarget.clone();
   noseMarker.position.copy(noseTarget);
 
-  const forward=noseTarget.clone().sub(carBasePos).normalize();
+  const forward=noseTarget.clone().sub(carCenter).normalize();           // stake direction
   const baseQ=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1),forward);
-
-  // roll equals traveled angle along circle
-  const rollAngle=phase - phaseZero;
+  const rollAngle=((phase - phaseZero) % (Math.PI*2)+Math.PI*2)%(Math.PI*2); // 0..2π
   const qRoll=new THREE.Quaternion().setFromAxisAngle(forward,rollAngle);
 
   carRig.quaternion.copy(baseQ).multiply(qRoll);
-  carRig.position.copy(carBasePos);
+  carRig.position.copy(carCenter);
 
-  // tether
-  const pa=tether.geometry.getAttribute('position');
-  pa.setXYZ(0,carBasePos.x,carBasePos.y,carBasePos.z);
+  // stake
+  const pa=stake.geometry.getAttribute('position');
+  pa.setXYZ(0,carCenter.x,carCenter.y,carCenter.z);
   pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z);
   pa.needsUpdate=true;
 
