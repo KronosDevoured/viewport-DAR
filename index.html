@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Numeric Heights, Big Circle when OFF</title>
+<title>DAR Rings — Big-Circle OFF, Stable Aim, Swapped ARL/ARR Spin</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -81,7 +81,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">DAR OFF: stick shows one big great circle and car follows it (no roll). DAR ON: small circle + roll with ARL/ARR direction. Heights accept direct numbers (±100). Deadzone=0.08.</div>
+    <div class="hint">DAR OFF: big great circle; car keeps orientation from stick axis (no halfway flips). DAR ON: small circle; ARL/ARR spin directions swapped per request. Deadzone=0.08.</div>
   </div>
 </div>
 
@@ -131,7 +131,7 @@ for(let i=0;i<4;i++){ const g=new THREE.BufferGeometry(); g.setAttribute('positi
 function greatCirclePerAxis(axis,arr){ const {u,v}=framePerp(axis); for(let k=0;k<=RING_SEGS;k++){ const t=(k/RING_SEGS)*Math.PI*2; const p=u.clone().multiplyScalar(Math.cos(t)).add(v.clone().multiplyScalar(Math.sin(t))); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
 function drawGreatCircles(){ for(const r of rings){ greatCirclePerAxis(r.axis,r.cur); r.line.visible=true; r.line.geometry.attributes.position.needsUpdate=true; } }
 
-/* active line (white) reused for big or small circle */
+/* active line (white) reused */
 const activeGeo=new THREE.BufferGeometry(); activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
 const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true})); activeLine.visible=false; scene.add(activeLine);
 
@@ -200,10 +200,11 @@ carHeightEl.addEventListener('change',applyHeights);
 carHeightEl.addEventListener('input',applyHeights);
 applyHeights();
 
+/* ARL/ARR are independent toggles; pressing again turns off */
 btnARL.addEventListener('click',()=>{
   const active = btnARL.getAttribute('aria-pressed')==='true';
   if(active){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); }
-  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false'); }
+  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); }
 });
 btnARR.addEventListener('click',()=>{
   const active = btnARR.getAttribute('aria-pressed')==='true';
@@ -233,7 +234,7 @@ function drawStick(){ const ctx=sctx,w=stickCanvas.width,h=stickCanvas.height,cx
   const kx=cx+stickX*R, ky=cy-stickY*R; ctx.beginPath(); ctx.arc(kx,ky,6*DPR,0,Math.PI*2); ctx.fillStyle='#e7ecf3'; ctx.fill(); ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
 }
 
-/* DAR math */
+/* math */
 function circleFrame(alpha,phi){
   const ca=Math.cos(alpha), sa=Math.sin(alpha);
   const c=new THREE.Vector3(Math.sin(alpha)*Math.cos(phi),Math.sin(alpha)*Math.sin(phi),Math.cos(alpha)).normalize();
@@ -246,10 +247,21 @@ function circleFrame(alpha,phi){
 function pointOnCircle(cf,t){ return cf.c.clone().multiplyScalar(cf.ca).add(cf.u.clone().multiplyScalar(Math.cos(t)*cf.sa)).add(cf.v.clone().multiplyScalar(Math.sin(t)*cf.sa)); }
 function drawCircle(cf,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=cf.t0+(k/RING_SEGS)*Math.PI*2; const p=pointOnCircle(cf,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
 
-/* Big great-circle helpers for DAR OFF */
-function bigCircleFromAxis(axis){ const {u,v}=framePerp(axis); return {u,v}; }
+function bigCircleFromAxis(axis){ const {u,v}=framePerp(axis); return {u,v,axis}; }
 function pointOnBigCircle(bc,t){ return bc.u.clone().multiplyScalar(Math.cos(t)).add(bc.v.clone().multiplyScalar(Math.sin(t))); }
 function drawBigCircle(bc,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=(k/RING_SEGS)*Math.PI*2; const p=pointOnBigCircle(bc,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
+
+/* stable aim: align +Z to f using an up hint; falls back if near parallel */
+function aimZWithUp(qOut, f, upHint){
+  const fwd=f.clone().normalize();
+  let up=upHint.clone().normalize();
+  if(Math.abs(fwd.dot(up))>0.98){ up = Math.abs(fwd.z)<0.9 ? new THREE.Vector3(0,0,1) : new THREE.Vector3(0,1,0); }
+  const right=up.clone().cross(fwd).normalize();
+  up=fwd.clone().cross(right).normalize();
+  const m=new THREE.Matrix4();
+  m.makeBasis(right, up, fwd); // columns = X,Y,Z
+  qOut.setFromRotationMatrix(m);
+}
 
 /* state */
 let cfCurrent=null, phase=0, lastPoint=null, lastTime=performance.now(), phaseZero=0;
@@ -286,11 +298,12 @@ function update(dt){
     carRoot.position.copy(rodAnchor);
     carOffset.position.y = carHeight - rodHeight;
 
-    carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
+    aimZWithUp(carAim.quaternion, stakeDir, new THREE.Vector3(0,1,0));
     carSpin.quaternion.identity();
     drawStick(); return;
   }
 
+  /* DAR OFF: big great circle. Orientation locked to stick axis (no flips). */
   if(darMode==='OFF'){
     let axis=new THREE.Vector3(stickX, stickY, 0);
     if(axis.lengthSq()<1e-6) axis.set(1,0,0);
@@ -315,13 +328,26 @@ function update(dt){
     const stakeDir=noseTarget.clone().sub(rodAnchor).normalize();
     carRoot.position.copy(rodAnchor);
     carOffset.position.y = carHeight - rodHeight;
-    carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
-    carSpin.quaternion.identity();
+
+    // Aim +Z to stake with stable up = stick axis
+    aimZWithUp(carAim.quaternion, stakeDir, axis);
+
+    // Roll about +Z so final UP matches stick axis (constant wrt progress)
+    const f=stakeDir.clone().normalize();
+    const desiredUp=axis.clone().normalize();
+    const refUpWorld=new THREE.Vector3(0,1,0).applyQuaternion(carAim.quaternion); // up before roll
+    const desiredUpProj=desiredUp.clone().sub(f.clone().multiplyScalar(desiredUp.dot(f))); desiredUpProj.normalize();
+    const refProj=refUpWorld.clone().sub(f.clone().multiplyScalar(refUpWorld.dot(f))); refProj.normalize();
+    let sinA = f.clone().dot(refProj.clone().cross(desiredUpProj));
+    let cosA = refProj.dot(desiredUpProj);
+    const angle=Math.atan2(sinA,cosA);
+    carSpin.quaternion.setFromAxisAngle(new THREE.Vector3(0,0,1), angle);
 
     const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
     drawStick(); return;
   }
 
+  /* DAR ON: small circle + roll. ARL/ARR spin directions swapped. */
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
   let phi=Math.atan2(stickY,stickX);
@@ -352,8 +378,9 @@ function update(dt){
   carRoot.position.copy(rodAnchor);
   carOffset.position.y = carHeight - rodHeight;
 
-  carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
+  aimZWithUp(carAim.quaternion, stakeDir, new THREE.Vector3(0,1,0));
 
+  // Swap spin directions: ARL = +1, ARR = -1  (reversed from prior build)
   const spinDir = (darMode==='ARR') ? -1 : 1;
   const rollAngle = spinDir * (phase - phaseZero);
   carSpin.quaternion.setFromAxisAngle(new THREE.Vector3(0,0,1), rollAngle);
@@ -364,6 +391,7 @@ function update(dt){
 }
 
 /* animate */
+let lastTime=performance.now();
 function tick(){ const now=performance.now(); const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now; update(dt); controls.update(); renderer.render(scene,camera); requestAnimationFrame(tick); }
 
 /* boot */
