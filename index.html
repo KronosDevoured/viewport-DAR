@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Car with Deadzone</title>
+<title>DAR Rings — Guides + On-Screen Stick</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
+
   header{
     display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;
     gap:.6rem .8rem;padding:.6rem .8rem;background:#12161d;border-bottom:1px solid #1f2530;
   }
-  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 320px;min-width:0}
-  .sliderBlock{display:flex;flex-direction:column;gap:.25rem;flex:1 1 200px;min-width:140px}
+  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 560px;min-width:0}
+  .sliderBlock{display:flex;flex-direction:column;gap:.25rem;flex:1 1 200px;min-width:160px}
   .sliderBlock label{font-size:.9rem;opacity:.9}
   .sliderBlock input[type=range]{flex:1;min-width:80px}
   .sliderBlock .tag{margin-top:.1rem;align-self:center;white-space:nowrap}
@@ -21,9 +22,18 @@
   .toggle{border:1px solid #2a3342;background:#0f141c;border-radius:10px;display:flex;overflow:hidden}
   .toggle button{border:0;padding:.35rem .6rem}
   .toggle button[aria-pressed="true"]{background:#1a2230}
+
   #scene{position:relative}
-  #hud{position:absolute;inset:auto 0 .8rem 0;display:flex;justify-content:center;gap:.6rem;pointer-events:none}
+  #hud{position:absolute;inset:auto 0 .8rem 0;display:flex;justify-content:center;gap:.8rem;pointer-events:none}
   .hint{pointer-events:auto;background:#0f141c;border:1px solid #2a3342;padding:.35rem .55rem;border-radius:10px;font-size:.85rem}
+
+  /* On-screen stick widget */
+  #stickWrap{pointer-events:auto;display:flex;align-items:center;gap:.5rem;background:#0f141c;border:1px solid #2a3342;border-radius:12px;padding:.4rem .6rem}
+  #stick{width:120px;height:120px;display:block}
+  .legend{display:flex;flex-wrap:wrap;gap:.3rem .6rem;font-size:.8rem;opacity:.9}
+  .chip{display:inline-flex;align-items:center;gap:.35rem;background:#0f141c;border:1px solid #2a3342;border-radius:999px;padding:.18rem .5rem}
+  .dot{width:.65rem;height:.65rem;border-radius:50%}
+  .up{background:#ff5c5c}.down{background:#53d769}.right{background:#4c8dff}.left{background:#ffd166}
 </style>
 </head>
 <body>
@@ -40,18 +50,35 @@
         <input id="alpha" type="range" min="5" max="60" step="1" value="28">
         <span id="alphaTag" class="tag">28°</span>
       </div>
+      <div class="sliderBlock">
+        <label for="carSize">Car Size</label>
+        <input id="carSize" type="range" min="0.005" max="0.08" step="0.001" value="0.020">
+        <span id="carSizeTag" class="tag">0.020</span>
+      </div>
     </div>
+
     <div class="actions">
       <div class="toggle" role="toolbar" aria-label="DAR mode">
-        <button id="arl" type="button" aria-pressed="false">ARL</button>
-        <button id="arr" type="button" aria-pressed="false">ARR</button>
+        <button id="arl" type="button" aria-pressed="false" title="Analog Rotate Left (+90°)">ARL</button>
+        <button id="arr" type="button" aria-pressed="false" title="Analog Rotate Right (−180°)">ARR</button>
       </div>
       <button id="reset" type="button">Reset View</button>
     </div>
   </header>
+
   <div id="scene"></div>
+
   <div id="hud">
-    <div class="hint">Stick drives morph & azimuth. m=0: four great circles. m&gt;0: one DAR circle; car loops. Deadzone=0.08.</div>
+    <div id="stickWrap">
+      <canvas id="stick" width="120" height="120"></canvas>
+      <div class="legend">
+        <span class="chip"><span class="dot up"></span>Up</span>
+        <span class="chip"><span class="dot down"></span>Down</span>
+        <span class="chip"><span class="dot right"></span>Right</span>
+        <span class="chip"><span class="dot left"></span>Left</span>
+      </div>
+    </div>
+    <div class="hint">Four great circles are always visible. At m&gt;0 they fade and a DAR circle appears; colors rotate only when m&gt;0. Deadzone=0.08.</div>
   </div>
 </div>
 
@@ -60,7 +87,7 @@ import * as THREE from "https://esm.sh/three@0.155.0";
 import { OrbitControls } from "https://esm.sh/three@0.155.0/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "https://esm.sh/three@0.155.0/examples/jsm/loaders/GLTFLoader.js";
 
-/* ---- scene setup ---- */
+/* ---------- scene ---------- */
 const host=document.getElementById('scene');
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
@@ -77,79 +104,286 @@ controls.enableDamping=true;
 
 scene.add(new THREE.HemisphereLight(0xd9e6ff,0x17202c,0.9));
 const dl=new THREE.DirectionalLight(0xffffff,0.6); dl.position.set(2,3,1); scene.add(dl);
-scene.add(new THREE.GridHelper(8,16,0x2a3342,0x1d2430));
+
+const refSphere=new THREE.Mesh(
+  new THREE.SphereGeometry(1,64,48),
+  new THREE.MeshPhongMaterial({color:0x0e141d,specular:0x111111,shininess:10,transparent:true,opacity:0.25})
+);
+scene.add(refSphere);
+
+const grid=new THREE.GridHelper(8,16,0x2a3342,0x1d2430); grid.position.y=-1.25; scene.add(grid);
 scene.add(new THREE.AxesHelper(1.25));
+
 const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
 pivot.position.set(0,0,1); scene.add(pivot);
 
-/* ---- geometry ---- */
+/* ---------- rings ---------- */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
-const baseMats=[
-  new THREE.LineBasicMaterial({color:0xff5c5c}),
-  new THREE.LineBasicMaterial({color:0x53d769}),
-  new THREE.LineBasicMaterial({color:0x4c8dff}),
-  new THREE.LineBasicMaterial({color:0xffd166})
+const baseMats=[ // transparent so we can fade
+  new THREE.LineBasicMaterial({color:0xff5c5c, transparent:true, opacity:0.9}), // +Y
+  new THREE.LineBasicMaterial({color:0x53d769, transparent:true, opacity:0.9}), // -Y
+  new THREE.LineBasicMaterial({color:0x4c8dff, transparent:true, opacity:0.9}), // +X
+  new THREE.LineBasicMaterial({color:0xffd166, transparent:true, opacity:0.9})  // -X
 ];
 const axesDir=[ new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1,0), new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0) ];
 const phis = axesDir.map(a => Math.atan2(a.y, a.x));
-function framePerp(a){ const tmp=Math.abs(a.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0); const u=tmp.clone().cross(a).normalize(); const v=a.clone().cross(u).normalize(); return {u,v}; }
-const rings=[];
-for(let i=0;i<4;i++){ const geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3)); const line=new THREE.Line(geo,baseMats[i]); scene.add(line); rings.push({line,cur:geo.attributes.position.array,axis:axesDir[i].clone(),phi:phis[i]}); }
-function greatCircle(axis,arr){ const {u,v}=framePerp(axis); for(let k=0;k<=RING_SEGS;k++){ const t=(k/RING_SEGS)*Math.PI*2; const p=u.clone().multiplyScalar(Math.cos(t)).add(v.clone().multiplyScalar(Math.sin(t))); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
-function drawGreatCircles(){ for(let r of rings){ greatCircle(r.axis,r.cur); r.line.visible=true; r.line.geometry.attributes.position.needsUpdate=true; } }
-const activeGeo=new THREE.BufferGeometry(); activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3)); const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff})); activeLine.visible=false; scene.add(activeLine);
 
-/* ---- car ---- */
-let car=null;
-new GLTFLoader().load("models/car.glb",(gltf)=>{ car=gltf.scene; car.scale.set(0.02,0.02,0.02); scene.add(car); });
-
-/* ---- ui ---- */
-const morph=document.getElementById('morph'), morphTag=document.getElementById('morphTag');
-const alphaSlider=document.getElementById('alpha'), alphaTag=document.getElementById('alphaTag');
-const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr');
-let endConeDeg=+alphaSlider.value, darMode='OFF';
-alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
-btnARL.addEventListener('click',()=>{ if(darMode==='ARL'){darMode='OFF';btnARL.setAttribute('aria-pressed','false');} else{darMode='ARL';btnARL.setAttribute('aria-pressed','true');btnARR.setAttribute('aria-pressed','false');} });
-btnARR.addEventListener('click',()=>{ if(darMode==='ARR'){darMode='OFF';btnARR.setAttribute('aria-pressed','false');} else{darMode='ARR';btnARR.setAttribute('aria-pressed','true');btnARL.setAttribute('aria-pressed','false');} });
-
-/* ---- input ---- */
-let stickX=0, stickY=0; const DEADZONE=0.08;
-function applyDeadzone(v){ return Math.abs(v)<DEADZONE?0:v; }
-function pollGamepad(){ const pads=navigator.getGamepads?.()||[]; for(const gp of pads){ if(!gp) continue; let x=gp.axes[0]||0, y=gp.axes[1]||0; stickX=applyDeadzone(x); stickY=applyDeadzone(-y); return; } }
-
-/* ---- DAR circle math ---- */
-function circleFrame(alpha,phi){ const ca=Math.cos(alpha), sa=Math.sin(alpha); const c=new THREE.Vector3(Math.sin(alpha)*Math.cos(phi),Math.sin(alpha)*Math.sin(phi),Math.cos(alpha)).normalize(); const tmp=Math.abs(c.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0); const u=tmp.clone().cross(c).normalize(); const v=c.clone().cross(u).normalize(); const w=new THREE.Vector3(0,0,1).sub(c.clone().multiplyScalar(ca)).multiplyScalar(1/Math.max(1e-6,sa)); const t0=Math.atan2(w.dot(v),w.dot(u)); return {c,ca,sa,u,v,t0}; }
-function pointOnCircle(cf,t){ return cf.c.clone().multiplyScalar(cf.ca).add(cf.u.clone().multiplyScalar(Math.cos(t)*cf.sa)).add(cf.v.clone().multiplyScalar(Math.sin(t)*cf.sa)); }
-function tangentOnCircle(cf,t){ return cf.u.clone().multiplyScalar(-Math.sin(t)*cf.sa).add(cf.v.clone().multiplyScalar(Math.cos(t)*cf.sa)); }
-function drawCircle(cf,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=cf.t0+(k/RING_SEGS)*Math.PI*2; const p=pointOnCircle(cf,t); const i3=3*k; arr[i3]=p.x;arr[i3+1]=p.y;arr[i3+2]=p.z; } }
-
-/* ---- car motion ---- */
-let cfCurrent=null, phase=0, lastPos=null, haveCircle=false, lastTime=performance.now();
-function reprojectPhase(cf){ const pRef=lastPos?lastPos.clone().normalize():pointOnCircle(cf,cf.t0); const center=cf.c.clone().multiplyScalar(cf.ca); const q=pRef.clone().sub(center); const x=q.dot(cf.u), y=q.dot(cf.v); return Math.atan2(y,x); }
-function applyColorRotation(m){ for(let i=0;i<4;i++) rings[i].line.material=baseMats[i]; if(m<=EPS) return; let shift=0; if(darMode==='ARL') shift=+1; if(darMode==='ARR') shift=-2; if(shift!==0){ for(let i=0;i<4;i++){ const matIndex=(i-shift+4)%4; rings[i].line.material=baseMats[matIndex]; } } }
-
-/* ---- update ---- */
-function update(dt){
-  pollGamepad();
-  const r=Math.hypot(stickX,stickY), m=Math.min(1,Math.max(0,r));
-  morph.value=String(m); morphTag.textContent=m.toFixed(3);
-  applyColorRotation(m);
-  if(m<=EPS){ activeLine.visible=false; drawGreatCircles(); haveCircle=false; return; }
-  const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg), alpha=THREE.MathUtils.lerp(aMin,aMax,m);
-  let phi=Math.atan2(stickY,stickX); if(darMode==='ARL') phi+=Math.PI/2; if(darMode==='ARR') phi-=Math.PI;
-  const cf=circleFrame(alpha,phi); drawCircle(cf,activeGeo.attributes.position.array); activeGeo.attributes.position.needsUpdate=true; activeLine.visible=true; for(const rL of rings) rL.line.visible=false;
-  if(!haveCircle||!cfCurrent){ cfCurrent=cf; phase=reprojectPhase(cfCurrent); haveCircle=true; } else{ const changed=Math.abs(cfCurrent.ca-cf.ca)>1e-6||cfCurrent.c.angleTo(cf.c)>1e-4; cfCurrent=cf; if(changed) phase=reprojectPhase(cfCurrent); }
-  phase+=1.8*dt; const p=pointOnCircle(cfCurrent,phase); lastPos=p.clone();
-  if(car){ car.position.copy(p); const tDir=tangentOnCircle(cfCurrent,phase).normalize(); const up=p.clone().normalize(); const target=p.clone().add(tDir); car.up.copy(up); car.lookAt(target); }
+function framePerp(a){
+  const tmp=Math.abs(a.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0);
+  const u=tmp.clone().cross(a).normalize();
+  const v=a.clone().cross(u).normalize();
+  return {u,v};
 }
 
-/* ---- animate ---- */
-document.getElementById('reset').addEventListener('click',()=>{ camera.position.set(2.3,1.6,2.5); controls.target.set(0,0,0); controls.update(); haveCircle=false; cfCurrent=null; lastPos=null; phase=0; morph.value="0"; morphTag.textContent="0.000"; });
-function tick(){ const now=performance.now(); const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now; update(dt); controls.update(); renderer.render(scene,camera); requestAnimationFrame(tick); }
-drawGreatCircles(); tick();
+const rings=[];
+for(let i=0;i<4;i++){
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
+  const line=new THREE.Line(geo,baseMats[i]); line.userData.isRing=true; scene.add(line);
+  rings.push({line,cur:geo.attributes.position.array,axis:axesDir[i].clone(),phi:phis[i]});
+}
+function greatCirclePerAxis(axis,arrOut){
+  const {u,v}=framePerp(axis);
+  for(let k=0;k<=RING_SEGS;k++){
+    const t=(k/RING_SEGS)*Math.PI*2;
+    const p=u.clone().multiplyScalar(Math.cos(t)).add(v.clone().multiplyScalar(Math.sin(t)));
+    const i3=3*k; arrOut[i3]=p.x; arrOut[i3+1]=p.y; arrOut[i3+2]=p.z;
+  }
+}
+function drawGreatCircles(){
+  for(const r of rings){
+    greatCirclePerAxis(r.axis, r.cur);
+    r.line.visible=true;
+    r.line.geometry.attributes.position.needsUpdate=true;
+  }
+}
 
-/* ---- resize ---- */
-addEventListener('resize',()=>{ const h=document.querySelector('header').offsetHeight; renderer.setSize(innerWidth,innerHeight-h); camera.aspect=renderer.domElement.width/renderer.domElement.height; camera.updateProjectionMatrix(); });
+const activeGeo=new THREE.BufferGeometry();
+activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
+const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true}));
+activeLine.visible=false; scene.add(activeLine);
+
+/* ---------- car rig ---------- */
+const carRig=new THREE.Group(); scene.add(carRig);
+let carMesh=null;
+let carScale=0.020;
+let noseLead=0.25; // car nose ahead of rig along +Z
+
+new GLTFLoader().load("models/car.glb",(gltf)=>{
+  carMesh=gltf.scene;
+  carMesh.position.set(0,0,-noseLead); // nose at rig
+  carRig.add(carMesh);
+  carRig.scale.setScalar(carScale);
+});
+
+/* ---------- UI ---------- */
+const morph=document.getElementById('morph'), morphTag=document.getElementById('morphTag');
+const alphaSlider=document.getElementById('alpha'), alphaTag=document.getElementById('alphaTag');
+const carSize=document.getElementById('carSize'), carSizeTag=document.getElementById('carSizeTag');
+const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr');
+
+let endConeDeg=+alphaSlider.value, darMode='OFF';
+alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
+carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); carRig.scale.setScalar(carScale); });
+btnARL.addEventListener('click',()=>{ if(darMode==='ARL'){darMode='OFF';btnARL.setAttribute('aria-pressed','false');} else{darMode='ARL';btnARL.setAttribute('aria-pressed','true');btnARR.setAttribute('aria-pressed','false');}});
+btnARR.addEventListener('click',()=>{ if(darMode==='ARR'){darMode='OFF';btnARR.setAttribute('aria-pressed','false');} else{darMode='ARR';btnARR.setAttribute('aria-pressed','true');btnARL.setAttribute('aria-pressed','false');}});
+
+document.getElementById('reset').addEventListener('click',()=>{
+  camera.position.set(2.3,1.6,2.5);
+  controls.target.set(0,0,0);
+  controls.update();
+  haveCircle=false; cfCurrent=null; lastPos=null; phase=0;
+  morph.value="0"; morphTag.textContent="0.000";
+});
+
+/* ---------- input + on-screen stick ---------- */
+let stickX=0, stickY=0; const DEADZONE=0.08;
+function dz(v){ return Math.abs(v)<DEADZONE?0:v; }
+function pollGamepad(){
+  const pads=navigator.getGamepads?.()||[];
+  for(const gp of pads){
+    if(!gp) continue;
+    stickX=dz(gp.axes[0]||0);
+    stickY=dz(-(gp.axes[1]||0)); // up positive
+    return;
+  }
+}
+const stickCanvas=document.getElementById('stick');
+const sctx=stickCanvas.getContext('2d');
+const DPR=Math.min(devicePixelRatio||1,2);
+stickCanvas.width=120*DPR; stickCanvas.height=120*DPR;
+stickCanvas.style.width='120px'; stickCanvas.style.height='120px';
+function drawStick(){
+  const ctx=sctx, w=stickCanvas.width, h=stickCanvas.height, cx=w/2, cy=h/2;
+  const R=Math.min(w,h)*0.45;
+  ctx.clearRect(0,0,w,h);
+
+  // base circle
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
+  ctx.strokeStyle='#2a3342'; ctx.lineWidth=2*DPR; ctx.stroke();
+
+  // deadzone circle
+  ctx.beginPath(); ctx.arc(cx,cy,R*DEADZONE,0,Math.PI*2);
+  ctx.strokeStyle='#3a4557'; ctx.setLineDash([4*DPR,4*DPR]); ctx.stroke(); ctx.setLineDash([]);
+
+  // quadrant guides colored: up red, down green, right blue, left orange
+  const arcs=[
+    {start:-Math.PI/2, end:0, color:'#ff5c5c'},   // up
+    {start: Math.PI/2, end:Math.PI, color:'#53d769'}, // down (drawn as lower-left; color cue only)
+    {start:0, end:Math.PI/2, color:'#4c8dff'},    // right
+    {start:Math.PI, end:1.5*Math.PI, color:'#ffd166'} // left
+  ];
+  ctx.lineWidth=3*DPR;
+  for(const a of arcs){ ctx.beginPath(); ctx.arc(cx,cy,R,a.start,a.end); ctx.strokeStyle=a.color; ctx.stroke(); }
+
+  // knob
+  const kx=cx + stickX*R;
+  const ky=cy - stickY*R;
+  ctx.beginPath(); ctx.arc(kx,ky,6*DPR,0,Math.PI*2);
+  ctx.fillStyle='#e7ecf3'; ctx.fill();
+  ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
+}
+
+/* ---------- DAR math ---------- */
+function circleFrame(alpha,phi){
+  const ca=Math.cos(alpha), sa=Math.sin(alpha);
+  const c=new THREE.Vector3(Math.sin(alpha)*Math.cos(phi),
+                            Math.sin(alpha)*Math.sin(phi),
+                            Math.cos(alpha)).normalize();
+  const tmp=Math.abs(c.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0);
+  const u=tmp.clone().cross(c).normalize();
+  const v=c.clone().cross(u).normalize();
+  const w=new THREE.Vector3(0,0,1).sub(c.clone().multiplyScalar(ca)).multiplyScalar(1/Math.max(1e-6,sa));
+  const t0=Math.atan2(w.dot(v), w.dot(u));
+  return {c,ca,sa,u,v,t0};
+}
+function pointOnCircle(cf,t){
+  return cf.c.clone().multiplyScalar(cf.ca)
+           .add(cf.u.clone().multiplyScalar(Math.cos(t)*cf.sa))
+           .add(cf.v.clone().multiplyScalar(Math.sin(t)*cf.sa));
+}
+function tangentOnCircle(cf,t){
+  return cf.u.clone().multiplyScalar(-Math.sin(t)*cf.sa)
+         .add(cf.v.clone().multiplyScalar(Math.cos(t)*cf.sa));
+}
+function drawCircle(cf, arrOut){
+  for(let k=0;k<=RING_SEGS;k++){
+    const t=cf.t0+(k/RING_SEGS)*Math.PI*2;
+    const p=pointOnCircle(cf,t);
+    const i3=3*k; arrOut[i3]=p.x; arrOut[i3+1]=p.y; arrOut[i3+2]=p.z;
+  }
+}
+
+/* ---------- state ---------- */
+let cfCurrent=null, phase=0, lastPos=null, haveCircle=false, lastTime=performance.now();
+
+/* continuity */
+function reprojectPhase(cf){
+  const pRef=lastPos?lastPos.clone().normalize():pointOnCircle(cf,cf.t0);
+  const center=cf.c.clone().multiplyScalar(cf.ca);
+  const q=pRef.clone().sub(center);
+  const x=q.dot(cf.u), y=q.dot(cf.v);
+  return Math.atan2(y,x);
+}
+
+/* colors: base at m==0; rotate only when m>0 */
+function applyColorRotation(m){
+  for(const r of rings) r.line.material=baseMats[rings.indexOf(r)];
+  if(m<=EPS) return;
+  let shift=0;
+  if(darMode==='ARL') shift=+1;
+  if(darMode==='ARR') shift=-2;
+  if(shift!==0){
+    for(let i=0;i<4;i++){
+      const matIndex=(i - shift + 4) % 4;
+      rings[i].line.material=baseMats[matIndex];
+    }
+  }
+}
+
+/* ---------- update ---------- */
+const angVelBase=1.8;
+function update(dt){
+  pollGamepad();
+
+  const r=Math.hypot(stickX,stickY);
+  const m=Math.min(1,Math.max(0,r));
+  morph.value=String(m); morphTag.textContent=m.toFixed(3);
+
+  applyColorRotation(m);
+
+  // fade guides when m>0
+  const guideOpacity = m>EPS ? 0.35 : 0.9;
+  for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=guideOpacity; }
+
+  if(m<=EPS){
+    activeLine.visible=false;
+    // ensure guides are drawn at least once
+    drawGreatCircles();
+    haveCircle=false;
+    drawStick();
+    return;
+  }
+
+  const aMin=THREE.MathUtils.degToRad(0.001);
+  const aMax=THREE.MathUtils.degToRad(endConeDeg);
+  const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
+
+  let phi=Math.atan2(stickY,stickX);
+  if(darMode==='ARL') phi+=Math.PI/2;
+  if(darMode==='ARR') phi-=Math.PI;
+
+  const cf=circleFrame(alpha,phi);
+  drawCircle(cf, activeGeo.attributes.position.array);
+  activeGeo.attributes.position.needsUpdate=true;
+  activeLine.visible=true;
+
+  if(!haveCircle||!cfCurrent){ cfCurrent=cf; phase=reprojectPhase(cfCurrent); haveCircle=true; }
+  else{
+    const changed = Math.abs(cfCurrent.ca-cf.ca)>1e-6 || cfCurrent.c.angleTo(cf.c)>1e-4;
+    cfCurrent=cf; if(changed) phase=reprojectPhase(cfCurrent);
+  }
+
+  // advance along circle
+  const speed = angVelBase * (0.3 + 0.7 * (alpha/aMax));
+  phase += speed * dt;
+
+  // nose at p
+  const p = pointOnCircle(cfCurrent, phase);
+  const n = p.clone().normalize();
+  const tDir = tangentOnCircle(cfCurrent, phase).normalize();
+
+  lastPos=p.clone();
+
+  // orient rig: up=n, forward=tDir; place rig so mesh nose rides p
+  const qForward=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), tDir);
+  const qUp=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), n);
+  carRig.quaternion.copy(qUp).multiply(qForward);
+  carRig.position.copy(p);
+
+  drawStick();
+}
+
+/* ---------- animate ---------- */
+function tick(){
+  const now=performance.now();
+  const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now;
+  update(dt);
+  controls.update();
+  renderer.render(scene,camera);
+  requestAnimationFrame(tick);
+}
+
+drawGreatCircles();
+tick();
+
+/* ---------- resize ---------- */
+addEventListener('resize',()=>{
+  const h=document.querySelector('header').offsetHeight;
+  renderer.setSize(innerWidth,innerHeight-h);
+  camera.aspect=renderer.domElement.width/renderer.domElement.height;
+  camera.updateProjectionMatrix();
+});
 </script>
 </body>
 </html>
