@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — Stable Stake Rig</title>
+<title>DAR Rings — Stable Stake Rig (Rod Height)</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
   header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.6rem .8rem;padding:.6rem .8rem;background:#12161d;border-bottom:1px solid #1f2530}
-  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 720px;min-width:0}
-  .sliderBlock{display:flex;flex-direction:column;gap:.25rem;flex:1 1 200px;min-width:160px}
+  .sl{display:flex;flex-wrap:wrap;gap:1rem;flex:1 1 980px;min-width:0}
+  .sliderBlock{display:flex;flex-direction:column;gap:.25rem;flex:1 1 220px;min-width:160px}
   .sliderBlock label{font-size:.9rem;opacity:.9}
   .sliderBlock input[type=range]{flex:1;min-width:80px}
   .sliderBlock .tag{margin-top:.1rem;align-self:center;white-space:nowrap}
@@ -49,9 +49,14 @@
         <span id="carSizeTag" class="tag">0.010</span>
       </div>
       <div class="sliderBlock">
-        <label for="carHeight">Car Height</label>
-        <input id="carHeight" type="range" min="-0.2" max="0.2" step="0.001" value="-0.020">
-        <span id="carHeightTag" class="tag">-0.020</span>
+        <label for="rodHeight">Rod Height</label>
+        <input id="rodHeight" type="range" min="-3.0" max="3.0" step="0.001" value="-0.200">
+        <span id="rodHeightTag" class="tag">-0.200</span>
+      </div>
+      <div class="sliderBlock">
+        <label for="carHeight">Car Height (mesh offset)</label>
+        <input id="carHeight" type="range" min="-3.0" max="3.0" step="0.001" value="-0.200">
+        <span id="carHeightTag" class="tag">-0.200</span>
       </div>
     </div>
     <div class="actions">
@@ -75,7 +80,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Car center fixed. Stake to circle point. +Z aims along stake. Roll = arc. Deadzone=0.08. Stick colors +45° CW.</div>
+    <div class="hint">Car center = rod anchor by default. Use mesh offset to nudge the body without breaking the stake axis. Deadzone=0.08. Stick colors +45° CW.</div>
   </div>
 </div>
 
@@ -91,17 +96,24 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight-document.querySelector('header').offsetHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 host.appendChild(renderer.domElement);
+
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x0f1116);
 const camera=new THREE.PerspectiveCamera(50,renderer.domElement.width/renderer.domElement.height,0.01,100);
 camera.position.set(2.3,1.6,2.5);
 const controls=new OrbitControls(camera,renderer.domElement); controls.enableDamping=true;
+
 scene.add(new THREE.HemisphereLight(0xd9e6ff,0x17202c,0.9));
 const dl=new THREE.DirectionalLight(0xffffff,0.6); dl.position.set(2,3,1); scene.add(dl);
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,48),new THREE.MeshPhongMaterial({color:0x0e141d,specular:0x111111,shininess:10,transparent:true,opacity:0.25})));
+
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,48),
+  new THREE.MeshPhongMaterial({color:0x0e141d,specular:0x111111,shininess:10,transparent:true,opacity:0.25})
+));
 const grid=new THREE.GridHelper(8,16,0x2a3342,0x1d2430); grid.position.y=-1.25; scene.add(grid);
 scene.add(new THREE.AxesHelper(1.25));
-const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444})); pivot.position.set(0,0,1); scene.add(pivot);
+
+const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
+pivot.position.set(0,0,1); scene.add(pivot);
 
 /* rings */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
@@ -122,34 +134,36 @@ function drawGreatCircles(){ for(const r of rings){ greatCirclePerAxis(r.axis,r.
 const activeGeo=new THREE.BufferGeometry(); activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
 const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true})); activeLine.visible=false; scene.add(activeLine);
 
-/* car rig: carRoot -> carAim -> carSpin -> carMesh */
+/* car rig: carRoot(y=rodHeight) -> carAim -> carSpin -> carOffset(y=carHeight-rodHeight) -> carMesh */
 const carRoot=new THREE.Group(); scene.add(carRoot);
 const carAim=new THREE.Group(); carRoot.add(carAim);
 const carSpin=new THREE.Group(); carAim.add(carSpin);
-let carMesh=null;
-let carScale=0.010, carHeight=-0.020;
-carRoot.position.set(0,carHeight,0);
-carRoot.updateMatrixWorld(true);
+const carOffset=new THREE.Group(); carSpin.add(carOffset);
 
-// debug axis on carSpin (set visible=false if not needed)
+let carMesh=null;
+let carScale=0.010, rodHeight=-0.200, carHeight=-0.200; // defaults
+carRoot.position.set(0,rodHeight,0);
+carOffset.position.y = carHeight - rodHeight;
+
+// helper axis (optional)
 const carAxes=new THREE.AxesHelper(0.25); carAxes.visible=false; carSpin.add(carAxes);
 
-// Fallback primitive if GLTF missing
+// fallback geometry if GLTF missing
 const fallback=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.24,0.8), new THREE.MeshStandardMaterial({color:0x8899aa,metalness:0.1,roughness:0.8,transparent:true,opacity:0.95}));
-fallback.visible=true; carSpin.add(fallback);
+fallback.visible=true; carOffset.add(fallback);
 
-// Load GLTF
+// load car
 function alignForwardToZ(obj, from='X'){ const map={X:new THREE.Vector3(1,0,0),'-X':new THREE.Vector3(-1,0,0),Y:new THREE.Vector3(0,1,0),'-Y':new THREE.Vector3(0,-1,0),Z:new THREE.Vector3(0,0,1),'-Z':new THREE.Vector3(0,0,-1)}; const q=new THREE.Quaternion().setFromUnitVectors(map[from]||map.X,new THREE.Vector3(0,0,1)); obj.quaternion.premultiply(q); }
 new GLTFLoader().load("models/car.glb",(gltf)=>{
   carMesh=gltf.scene;
-  alignForwardToZ(carMesh,'X'); // change if your model’s forward differs
-  carSpin.add(carMesh);
+  alignForwardToZ(carMesh,'X');  // adjust if needed
+  carOffset.add(carMesh);
   fallback.visible=false;
   setCarScale(carScale);
 });
 function setCarScale(s){ carSpin.scale.setScalar(s); }
 
-/* stake line: from carRoot to nose point */
+/* stake line from rod anchor (carRoot) to nose point */
 const stakeGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]);
 const stake=new THREE.Line(stakeGeo,new THREE.LineBasicMaterial({color:0x9aa6bd,transparent:true,opacity:0.9}));
 scene.add(stake);
@@ -163,12 +177,15 @@ const morph=document.getElementById('morph'), morphTag=document.getElementById('
 const alphaSlider=document.getElementById('alpha'), alphaTag=document.getElementById('alphaTag');
 const carSize=document.getElementById('carSize'), carSizeTag=document.getElementById('carSizeTag');
 const carHeightEl=document.getElementById('carHeight'), carHeightTag=document.getElementById('carHeightTag');
+const rodHeightEl=document.getElementById('rodHeight'), rodHeightTag=document.getElementById('rodHeightTag');
 const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr');
 
 let endConeDeg=+alphaSlider.value, darMode='OFF';
 alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
 carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); setCarScale(carScale); });
-carHeightEl.addEventListener('input',()=>{ carHeight=+carHeightEl.value; carHeightTag.textContent=carHeight.toFixed(3); carRoot.position.y=carHeight; });
+rodHeightEl.addEventListener('input',()=>{ rodHeight=+rodHeightEl.value; rodHeightTag.textContent=rodHeight.toFixed(3); carRoot.position.y=rodHeight; carOffset.position.y = carHeight - rodHeight; });
+carHeightEl.addEventListener('input',()=>{ carHeight=+carHeightEl.value; carHeightTag.textContent=carHeight.toFixed(3); carOffset.position.y = carHeight - rodHeight; });
+
 btnARL.addEventListener('click',()=>{ if(darMode==='ARL'){darMode='OFF';btnARL.setAttribute('aria-pressed','false');} else{darMode='ARL';btnARL.setAttribute('aria-pressed','true');btnARR.setAttribute('aria-pressed','false');}});
 btnARR.addEventListener('click',()=>{ if(darMode==='ARR'){darMode='OFF';btnARR.setAttribute('aria-pressed','false');} else{darMode='ARR';btnARR.setAttribute('aria-pressed','true');btnARL.setAttribute('aria-pressed','false');}});
 
@@ -179,11 +196,11 @@ document.getElementById('reset').addEventListener('click',()=>{
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
 });
 
-/* input + on-screen stick (+45° CW) */
+/* stick (+45° CW colors) */
 let stickX=0, stickY=0; const DEADZONE=0.08;
 function dz(v){ return Math.abs(v)<DEADZONE?0:v; }
 function pollGamepad(){ const pads=navigator.getGamepads?.()||[]; for(const gp of pads){ if(!gp) continue; stickX=dz(gp.axes[0]||0); stickY=dz(-(gp.axes[1]||0)); return; } }
-const stickCanvas=document.getElementById('stick'); const sctx=stickCanvas.getContext('2d'); const DPR=Math.min(devicePixelRatio||1,2);
+const stickCanvas=document.getElementById('stick'), sctx=stickCanvas.getContext('2d'); const DPR=Math.min(devicePixelRatio||1,2);
 stickCanvas.width=120*DPR; stickCanvas.height=120*DPR; stickCanvas.style.width='120px'; stickCanvas.style.height='120px';
 const THETA_SHIFT=-Math.PI/4;
 function drawStick(){ const ctx=sctx,w=stickCanvas.width,h=stickCanvas.height,cx=w/2,cy=h/2; const R=Math.min(w,h)*0.45; ctx.clearRect(0,0,w,h);
@@ -215,47 +232,69 @@ function applyColorRotation(m){ for(let i=0;i<4;i++) rings[i].line.material=base
 const angVelBase=1.8;
 function update(dt){
   pollGamepad();
-  const r=Math.hypot(stickX,stickY); const m=Math.min(1,Math.max(0,r)); morph.value=String(m); morphTag.textContent=m.toFixed(3);
+  const r=Math.hypot(stickX,stickY); const m=Math.min(1,Math.max(0,r));
+  morph.value=String(m); morphTag.textContent=m.toFixed(3);
   applyColorRotation(m);
   const guideOpacity=m>EPS?0.35:0.9; for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=guideOpacity; }
-  const carCenter=carRoot.position;
+
+  const rodAnchor=new THREE.Vector3(0,rodHeight,0);
 
   if(m<=EPS){
     activeLine.visible=false; drawGreatCircles();
     const idleTarget=new THREE.Vector3(0,0,1);
     noseMarker.position.copy(idleTarget);
-    // aim +Z to stake
-    const forward=idleTarget.clone().sub(carCenter).normalize();
-    carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), forward);
-    // no roll
+
+    // aim +Z along stake
+    const stakeDir=idleTarget.clone().sub(rodAnchor).normalize();
+    carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
     carSpin.quaternion.identity();
-    // stake
-    const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,carCenter.x,carCenter.y,carCenter.z); pa.setXYZ(1,idleTarget.x,idleTarget.y,idleTarget.z); pa.needsUpdate=true;
+
+    // place rig and mesh offset
+    carRoot.position.copy(rodAnchor);
+    carOffset.position.y = carHeight - rodHeight;
+
+    // stake line
+    const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,idleTarget.x,idleTarget.y,idleTarget.z); pa.needsUpdate=true;
+
     drawStick(); return;
   }
 
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
+
   let phi=Math.atan2(stickY,stickX); if(darMode==='ARL') phi+=Math.PI/2; if(darMode==='ARR') phi-=Math.PI;
+
   const prevPoint=(cfCurrent?pointOnCircle(cfCurrent,phase):(lastPoint||new THREE.Vector3(0,0,1)));
-  const cf=circleFrame(alpha,phi); drawCircle(cf,activeGeo.attributes.position.array); activeGeo.attributes.position.needsUpdate=true; activeLine.visible=true;
-  const center=cf.c.clone().multiplyScalar(cf.ca); const q=prevPoint.clone().normalize().sub(center); const x=q.dot(cf.u), y=q.dot(cf.v); phase=Math.atan2(y,x);
-  phaseZero=cf.t0; // roll reference
+  const cf=circleFrame(alpha,phi);
+  drawCircle(cf,activeGeo.attributes.position.array); activeGeo.attributes.position.needsUpdate=true; activeLine.visible=true;
+
+  const center=cf.c.clone().multiplyScalar(cf.ca);
+  const q=prevPoint.clone().normalize().sub(center);
+  const x=q.dot(cf.u), y=q.dot(cf.v);
+  phase=Math.atan2(y,x);
+  phaseZero=cf.t0;
+
   const speed=angVelBase*(0.3+0.7*(alpha/aMax)); phase+=speed*dt;
   cfCurrent=cf;
 
-  const noseTarget=pointOnCircle(cfCurrent,phase); lastPoint=noseTarget.clone(); noseMarker.position.copy(noseTarget);
+  const noseTarget=pointOnCircle(cfCurrent,phase);
+  lastPoint=noseTarget.clone();
+  noseMarker.position.copy(noseTarget);
 
-  // aim +Z to stake (no position change)
-  const forward=noseTarget.clone().sub(carCenter).normalize();
-  carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), forward);
+  // stake direction
+  const stakeDir=noseTarget.clone().sub(rodAnchor).normalize();
 
-  // roll about local +Z by traveled angle
+  // place rig and mesh offset
+  carRoot.position.copy(rodAnchor);
+  carOffset.position.y = carHeight - rodHeight;
+
+  // aim +Z to stake, then roll by arc progress
+  carAim.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), stakeDir);
   const rollAngle=phase - phaseZero;
   carSpin.quaternion.setFromAxisAngle(new THREE.Vector3(0,0,1), rollAngle);
 
   // stake line
-  const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,carCenter.x,carCenter.y,carCenter.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
+  const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
 
   drawStick();
 }
@@ -267,7 +306,12 @@ function tick(){ const now=performance.now(); const dt=Math.min(0.05,(now-lastTi
 drawGreatCircles(); tick();
 
 /* resize */
-addEventListener('resize',()=>{ const h=document.querySelector('header').offsetHeight; renderer.setSize(innerWidth,innerHeight+h>0?innerHeight-h:innerHeight); camera.aspect=renderer.domElement.width/renderer.domElement.height; camera.updateProjectionMatrix(); });
+addEventListener('resize',()=>{
+  const h=document.querySelector('header').offsetHeight;
+  renderer.setSize(innerWidth,innerHeight-h);
+  camera.aspect=renderer.domElement.width/renderer.domElement.height;
+  camera.updateProjectionMatrix();
+});
 </script>
 </body>
 </html>
