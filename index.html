@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — ARL mirrors ARR; DAR OFF direct stick mapping</title>
+<title>DAR Rings — DAR preview (4 small circles) + direct stick mapping</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -81,7 +81,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">DAR OFF: stick maps directly (up→nose down, down→nose up, left→nose left, right→nose right). DAR ON: ARL mirrors ARR (±90° azimuth; opposite travel and spin). Deadzone=0.08.</div>
+    <div class="hint">DAR preview: four small colored rings show distortion. They hide after first stick input. DAR OFF: up→nose down, down→nose up, left→nose left, right→nose right. Deadzone=0.08.</div>
   </div>
 </div>
 
@@ -119,13 +119,15 @@ scene.add(new THREE.AxesHelper(1.25));
 const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
 pivot.position.set(0,0,1); scene.add(pivot);
 
-/* guides */
+/* constants */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
+
+/* great circles (kept for reference when preview not showing) */
 const baseMats=[
-  new THREE.LineBasicMaterial({color:0xff5c5c,transparent:true,opacity:0.9,depthTest:false}),
-  new THREE.LineBasicMaterial({color:0x53d769,transparent:true,opacity:0.9,depthTest:false}),
-  new THREE.LineBasicMaterial({color:0x4c8dff,transparent:true,opacity:0.9,depthTest:false}),
-  new THREE.LineBasicMaterial({color:0xffd166,transparent:true,opacity:0.9,depthTest:false})
+  new THREE.LineBasicMaterial({color:0xff5c5c,transparent:true,opacity:0.9,depthTest:false}), // +Y
+  new THREE.LineBasicMaterial({color:0x53d769,transparent:true,opacity:0.9,depthTest:false}), // -Y
+  new THREE.LineBasicMaterial({color:0x4c8dff,transparent:true,opacity:0.9,depthTest:false}), // +X
+  new THREE.LineBasicMaterial({color:0xffd166,transparent:true,opacity:0.9,depthTest:false})  // -X
 ];
 const axesDir=[ new THREE.Vector3(0,1,0), new THREE.Vector3(0,-1,0), new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0) ];
 function framePerp(a){ const tmp=Math.abs(a.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0); const u=tmp.clone().cross(a).normalize(); const v=a.clone().cross(u).normalize(); return {u,v}; }
@@ -137,14 +139,28 @@ for(let i=0;i<4;i++){
   rings.push({line,cur:g.attributes.position.array,axis:axesDir[i].clone()});
 }
 function greatCirclePerAxis(axis,arr){
-  const {u,v}=framePerp(axis); const R=1.003;
+  const {u,v}=framePerp(axis); const R=1.003; // slight nudge
   for(let k=0;k<=RING_SEGS;k++){
     const t=(k/RING_SEGS)*Math.PI*2;
     const p=u.clone().multiplyScalar(Math.cos(t)*R).add(v.clone().multiplyScalar(Math.sin(t)*R));
     const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z;
   }
 }
-function drawGreatCircles(){ for(const r of rings){ greatCirclePerAxis(r.axis,r.cur); r.line.visible=true; r.line.geometry.attributes.position.needsUpdate=true; } }
+function drawGreatCircles(){ for(const r of rings){ greatCirclePerAxis(r.axis,r.cur); r.line.geometry.attributes.position.needsUpdate=true; } }
+
+/* four small DAR preview rings */
+const darRings=[];
+const darColors=[0xff5c5c,0x53d769,0x4c8dff,0xffd166]; // +Y,-Y,+X,-X
+for(let i=0;i<4;i++){
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N),3));
+  const line=new THREE.Line(
+    g,
+    new THREE.LineBasicMaterial({color:darColors[i],opacity:0.95,transparent:true,depthTest:false})
+  );
+  line.visible=false; scene.add(line);
+  darRings.push({line,buf:g.attributes.position.array});
+}
 
 /* active path line */
 const activeGeo=new THREE.BufferGeometry();
@@ -152,7 +168,7 @@ activeGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(3*N
 const activeLine=new THREE.Line(activeGeo,new THREE.LineBasicMaterial({color:0xffffff,opacity:0.95,transparent:true,depthTest:false}));
 activeLine.visible=false; scene.add(activeLine);
 
-/* car rig: root(y=rodHeight) -> aim -> spin -> offset(y=carHeight-rodHeight) -> mesh */
+/* car rig */
 const carRoot=new THREE.Group(); scene.add(carRoot);
 const carAim=new THREE.Group(); carRoot.add(carAim);
 const carSpin=new THREE.Group(); carAim.add(carSpin);
@@ -163,11 +179,9 @@ let carScale=0.010, rodHeight=-0.200, carHeight=-0.200;
 carRoot.position.set(0,rodHeight,0);
 carOffset.position.y = carHeight - rodHeight;
 
-/* placeholder if model missing */
 const fallback=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.24,0.8), new THREE.MeshStandardMaterial({color:0x8899aa,metalness:0.1,roughness:0.8,transparent:true,opacity:0.95}));
 fallback.visible=true; carOffset.add(fallback);
 
-/* load car and align +X -> +Z forward */
 function alignForwardToZ(obj, from='X'){
   const axes={X:new THREE.Vector3(1,0,0),'-X':new THREE.Vector3(-1,0,0),Y:new THREE.Vector3(0,1,0),'-Y':new THREE.Vector3(0,-1,0),Z:new THREE.Vector3(0,0,1),'-Z':new THREE.Vector3(0,0,-1)};
   const q=new THREE.Quaternion().setFromUnitVectors(axes[from]||axes.X,new THREE.Vector3(0,0,1));
@@ -176,7 +190,7 @@ function alignForwardToZ(obj, from='X'){
 new GLTFLoader().load("models/car.glb",(gltf)=>{ carMesh=gltf.scene; alignForwardToZ(carMesh,'X'); carOffset.add(carMesh); fallback.visible=false; setCarScale(carScale); });
 function setCarScale(s){ carSpin.scale.setScalar(s); }
 
-/* stake line + nose marker */
+/* stake + nose marker */
 const stakeGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]);
 const stake=new THREE.Line(stakeGeo,new THREE.LineBasicMaterial({color:0x9aa6bd,transparent:true,opacity:0.9,depthTest:false}));
 scene.add(stake);
@@ -193,6 +207,7 @@ const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr
 
 let endConeDeg=+alphaSlider.value;
 let darMode='OFF'; // OFF | ARL | ARR
+let showDARPreview=false; // show 4 small rings until first stick input
 
 alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
 carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); setCarScale(carScale); });
@@ -213,13 +228,13 @@ applyHeights();
 /* DAR toggles */
 btnARL.addEventListener('click',()=>{
   const active = btnARL.getAttribute('aria-pressed')==='true';
-  if(active){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); }
-  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); }
+  if(active){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); showDARPreview=false; }
+  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); showDARPreview=true; }
 });
 btnARR.addEventListener('click',()=>{
   const active = btnARR.getAttribute('aria-pressed')==='true';
-  if(active){ darMode='OFF'; btnARR.setAttribute('aria-pressed','false'); }
-  else{ darMode='ARR'; btnARR.setAttribute('aria-pressed','true'); btnARL.setAttribute('aria-pressed','false'); }
+  if(active){ darMode='OFF'; btnARR.setAttribute('aria-pressed','false'); showDARPreview=false; }
+  else{ darMode='ARR'; btnARR.setAttribute('aria-pressed','true'); btnARL.setAttribute('aria-pressed','false'); showDARPreview=true; }
 });
 
 document.getElementById('reset').addEventListener('click',()=>{
@@ -227,6 +242,7 @@ document.getElementById('reset').addEventListener('click',()=>{
   cfCurrent=null; bcCurrent=null; phase=0; lastPoint=null; phaseZero=0; lastUpWorld.set(0,1,0);
   morph.value="0"; morphTag.textContent="0.000";
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
+  showDARPreview=false; for(const r of darRings) r.line.visible=false;
 });
 
 /* gamepad + stick UI */
@@ -269,7 +285,7 @@ function bigCircleFromAxis(axis){ const {u,v}=framePerp(axis); return {u,v,axis}
 function pointOnBigCircle(bc,t){ return bc.u.clone().multiplyScalar(Math.cos(t)).add(bc.v.clone().multiplyScalar(Math.sin(t))); }
 function drawBigCircle(bc,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=(k/RING_SEGS)*Math.PI*2; const p=pointOnBigCircle(bc,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
 
-/* aiming with preferred-up, continuous (used in DAR-ON) */
+/* aiming helper (used in DAR ON) */
 function makeQuatAimWithUp(fwd, upPref, prevUp){
   const f=fwd.clone().normalize();
   let u=upPref.clone();
@@ -292,18 +308,27 @@ let phase=0, phaseZero=0, lastPoint=null;
 let lastTime=performance.now();
 let lastUpWorld=new THREE.Vector3(0,1,0);
 
-/* color rotation only when m>0 */
+/* color remap only when m>0 (kept) */
 function applyColorRotation(m){
   for(let i=0;i<4;i++) rings[i].line.material=baseMats[i];
   if(m<=EPS) return;
   let shift=0;
-  if(darMode==='ARL') shift=+1;   // CCW rotate labels in ARL
-  if(darMode==='ARR') shift=-2;   // CW rotate labels in ARR
+  if(darMode==='ARL') shift=+1;
+  if(darMode==='ARR') shift=-2;
   if(shift!==0){ for(let i=0;i<4;i++){ const mi=(i-shift+4)%4; rings[i].line.material=baseMats[mi]; } }
 }
 
-/* helpers */
-function unwrapToNear(target, reference){ const TWO=Math.PI*2; return target + Math.round((reference-target)/TWO)*TWO; }
+/* DAR preview rendering */
+function renderDarPreview(alpha, phi, mode){
+  const modeShift = (mode==='ARL') ? +Math.PI/2 : (mode==='ARR' ? -Math.PI/2 : 0);
+  const offsets=[ Math.PI/2, -Math.PI/2, 0, Math.PI ]; // +Y,-Y,+X,-X
+  for(let i=0;i<4;i++){
+    const cf = circleFrame(alpha, phi + modeShift + offsets[i]);
+    drawCircle(cf, darRings[i].buf);
+    darRings[i].line.visible = true;
+    darRings[i].line.geometry.attributes.position.needsUpdate = true;
+  }
+}
 
 /* update */
 const angVelBase=1.8;
@@ -313,8 +338,24 @@ function update(dt){
   morph.value=String(m); morphTag.textContent=m.toFixed(3);
   applyColorRotation(m);
 
-  // guides always visible
-  const guideOpacity=m>EPS?0.35:0.9; for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=guideOpacity; }
+  // default vis
+  for(const d of darRings) d.line.visible=false;
+
+  // great circles: show unless preview is showing
+  for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=(m>EPS?0.35:0.9); }
+
+  // preview: only when DAR active and before first input
+  if((darMode==='ARL' || darMode==='ARR') && showDARPreview){
+    if(r > DEADZONE){
+      showDARPreview=false;
+    }else{
+      // hide great circles while preview is displayed
+      for(const rL of rings){ rL.line.visible=false; }
+      const aMin = THREE.MathUtils.degToRad(0.001); // tiny collapsed
+      const phi0 = 0;                                // neutral azimuth
+      renderDarPreview(aMin, phi0, darMode);
+    }
+  }
 
   const rodAnchor=new THREE.Vector3(0,rodHeight,0);
 
@@ -345,20 +386,15 @@ function update(dt){
     const noseTarget=pointOnBigCircle(bcCurrent,phase);
     lastPoint=noseTarget.clone(); noseMarker.position.copy(noseTarget);
 
-    // anchor at rod
     carRoot.position.copy(rodAnchor);
     carOffset.position.y=carHeight-rodHeight;
 
-    // map stick to yaw/pitch directly:
-    // up stick -> nose down (pitch -), down -> nose up (pitch +)
-    // right stick -> nose right (yaw +), left -> nose left (yaw -)
     const PITCH_MAX=Math.PI/3, YAW_MAX=Math.PI/3;
-    const pitch = -PITCH_MAX * stickY;
-    const yaw   =  YAW_MAX * stickX;
-
+    const pitch = -PITCH_MAX * stickY; // up stick -> nose down
+    const yaw   =  YAW_MAX * stickX;   // right stick -> nose right
     const qYaw   = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
     const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), pitch);
-    carAim.quaternion.copy(qYaw.multiply(qPitch)); // yaw then pitch
+    carAim.quaternion.copy(qYaw.multiply(qPitch));
     carSpin.quaternion.identity();
 
     const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
