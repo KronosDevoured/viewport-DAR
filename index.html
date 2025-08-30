@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — DAR preview (4 small circles) + direct stick mapping</title>
+<title>DAR Rings — 4 small DAR circles always visible when DAR ON</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -81,7 +81,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">DAR preview: four small colored rings show distortion. They hide after first stick input. DAR OFF: up→nose down, down→nose up, left→nose left, right→nose right. Deadzone=0.08.</div>
+    <div class="hint">DAR ON: four small colored rings are visible at all times. DAR OFF: great circles. Deadzone=0.08.</div>
   </div>
 </div>
 
@@ -122,7 +122,7 @@ pivot.position.set(0,0,1); scene.add(pivot);
 /* constants */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
 
-/* great circles (kept for reference when preview not showing) */
+/* great circles */
 const baseMats=[
   new THREE.LineBasicMaterial({color:0xff5c5c,transparent:true,opacity:0.9,depthTest:false}), // +Y
   new THREE.LineBasicMaterial({color:0x53d769,transparent:true,opacity:0.9,depthTest:false}), // -Y
@@ -139,7 +139,7 @@ for(let i=0;i<4;i++){
   rings.push({line,cur:g.attributes.position.array,axis:axesDir[i].clone()});
 }
 function greatCirclePerAxis(axis,arr){
-  const {u,v}=framePerp(axis); const R=1.003; // slight nudge
+  const {u,v}=framePerp(axis); const R=1.003;
   for(let k=0;k<=RING_SEGS;k++){
     const t=(k/RING_SEGS)*Math.PI*2;
     const p=u.clone().multiplyScalar(Math.cos(t)*R).add(v.clone().multiplyScalar(Math.sin(t)*R));
@@ -148,7 +148,7 @@ function greatCirclePerAxis(axis,arr){
 }
 function drawGreatCircles(){ for(const r of rings){ greatCirclePerAxis(r.axis,r.cur); r.line.geometry.attributes.position.needsUpdate=true; } }
 
-/* four small DAR preview rings */
+/* four small DAR rings (always visible when DAR ON) */
 const darRings=[];
 const darColors=[0xff5c5c,0x53d769,0x4c8dff,0xffd166]; // +Y,-Y,+X,-X
 for(let i=0;i<4;i++){
@@ -207,7 +207,6 @@ const btnARL=document.getElementById('arl'), btnARR=document.getElementById('arr
 
 let endConeDeg=+alphaSlider.value;
 let darMode='OFF'; // OFF | ARL | ARR
-let showDARPreview=false; // show 4 small rings until first stick input
 
 alphaSlider.addEventListener('input',()=>{ endConeDeg=+alphaSlider.value; alphaTag.textContent=endConeDeg+'°'; });
 carSize.addEventListener('input',()=>{ carScale=+carSize.value; carSizeTag.textContent=carScale.toFixed(3); setCarScale(carScale); });
@@ -228,13 +227,13 @@ applyHeights();
 /* DAR toggles */
 btnARL.addEventListener('click',()=>{
   const active = btnARL.getAttribute('aria-pressed')==='true';
-  if(active){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); showDARPreview=false; }
-  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); showDARPreview=true; }
+  if(active){ darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); }
+  else{ darMode='ARL'; btnARL.setAttribute('aria-pressed','true'); btnARR.setAttribute('aria-pressed','false'); }
 });
 btnARR.addEventListener('click',()=>{
   const active = btnARR.getAttribute('aria-pressed')==='true';
-  if(active){ darMode='OFF'; btnARR.setAttribute('aria-pressed','false'); showDARPreview=false; }
-  else{ darMode='ARR'; btnARR.setAttribute('aria-pressed','true'); btnARL.setAttribute('aria-pressed','false'); showDARPreview=true; }
+  if(active){ darMode='OFF'; btnARR.setAttribute('aria-pressed','false'); }
+  else{ darMode='ARR'; btnARR.setAttribute('aria-pressed','true'); btnARL.setAttribute('aria-pressed','false'); }
 });
 
 document.getElementById('reset').addEventListener('click',()=>{
@@ -242,7 +241,6 @@ document.getElementById('reset').addEventListener('click',()=>{
   cfCurrent=null; bcCurrent=null; phase=0; lastPoint=null; phaseZero=0; lastUpWorld.set(0,1,0);
   morph.value="0"; morphTag.textContent="0.000";
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
-  showDARPreview=false; for(const r of darRings) r.line.visible=false;
 });
 
 /* gamepad + stick UI */
@@ -285,7 +283,7 @@ function bigCircleFromAxis(axis){ const {u,v}=framePerp(axis); return {u,v,axis}
 function pointOnBigCircle(bc,t){ return bc.u.clone().multiplyScalar(Math.cos(t)).add(bc.v.clone().multiplyScalar(Math.sin(t))); }
 function drawBigCircle(bc,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=(k/RING_SEGS)*Math.PI*2; const p=pointOnBigCircle(bc,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
 
-/* aiming helper (used in DAR ON) */
+/* aiming helper (DAR ON) */
 function makeQuatAimWithUp(fwd, upPref, prevUp){
   const f=fwd.clone().normalize();
   let u=upPref.clone();
@@ -308,7 +306,7 @@ let phase=0, phaseZero=0, lastPoint=null;
 let lastTime=performance.now();
 let lastUpWorld=new THREE.Vector3(0,1,0);
 
-/* color remap only when m>0 (kept) */
+/* color remap for great circles only, when m>0 */
 function applyColorRotation(m){
   for(let i=0;i<4;i++) rings[i].line.material=baseMats[i];
   if(m<=EPS) return;
@@ -318,15 +316,17 @@ function applyColorRotation(m){
   if(shift!==0){ for(let i=0;i<4;i++){ const mi=(i-shift+4)%4; rings[i].line.material=baseMats[mi]; } }
 }
 
-/* DAR preview rendering */
-function renderDarPreview(alpha, phi, mode){
-  const modeShift = (mode==='ARL') ? +Math.PI/2 : (mode==='ARR' ? -Math.PI/2 : 0);
+/* render the 4 small DAR rings given alpha and mode */
+function renderDarSet(alpha, mode){
+  // base azimuth reference; mode shifts whole set
+  const modeShift = (mode==='ARL') ? +Math.PI/2 : -Math.PI/2; // ARL CCW, ARR CW
+  const phi0 = 0; // world-aligned reference
   const offsets=[ Math.PI/2, -Math.PI/2, 0, Math.PI ]; // +Y,-Y,+X,-X
   for(let i=0;i<4;i++){
-    const cf = circleFrame(alpha, phi + modeShift + offsets[i]);
+    const cf = circleFrame(alpha, phi0 + modeShift + offsets[i]);
     drawCircle(cf, darRings[i].buf);
-    darRings[i].line.visible = true;
-    darRings[i].line.geometry.attributes.position.needsUpdate = true;
+    darRings[i].line.visible=true;
+    darRings[i].line.geometry.attributes.position.needsUpdate=true;
   }
 }
 
@@ -338,29 +338,20 @@ function update(dt){
   morph.value=String(m); morphTag.textContent=m.toFixed(3);
   applyColorRotation(m);
 
-  // default vis
-  for(const d of darRings) d.line.visible=false;
-
-  // great circles: show unless preview is showing
-  for(const rL of rings){ rL.line.visible=true; rL.line.material.opacity=(m>EPS?0.35:0.9); }
-
-  // preview: only when DAR active and before first input
-  if((darMode==='ARL' || darMode==='ARR') && showDARPreview){
-    if(r > DEADZONE){
-      showDARPreview=false;
-    }else{
-      // hide great circles while preview is displayed
-      for(const rL of rings){ rL.line.visible=false; }
-      const aMin = THREE.MathUtils.degToRad(0.001); // tiny collapsed
-      const phi0 = 0;                                // neutral azimuth
-      renderDarPreview(aMin, phi0, darMode);
-    }
-  }
+  // visibility policy
+  const darActive = (darMode==='ARL' || darMode==='ARR');
+  for(const dr of darRings) dr.line.visible=false;
+  for(const gc of rings) gc.line.visible=!darActive; // hide great circles when DAR ON
 
   const rodAnchor=new THREE.Vector3(0,rodHeight,0);
 
   if(m<=EPS){
-    activeLine.visible=false; drawGreatCircles();
+    activeLine.visible=false;
+    if(!darActive) drawGreatCircles();
+    else{
+      const aMin=THREE.MathUtils.degToRad(0.001);
+      renderDarSet(aMin, darMode); // show collapsed set at rest
+    }
     const idleTarget=new THREE.Vector3(0,0,1); noseMarker.position.copy(idleTarget);
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     carAim.quaternion.identity(); carSpin.quaternion.identity();
@@ -368,7 +359,7 @@ function update(dt){
   }
 
   /* DAR OFF — direct stick → nose mapping */
-  if(darMode==='OFF'){
+  if(!darActive){
     let axis=new THREE.Vector3(stickX, stickY, 0); if(axis.lengthSq()<1e-6) axis.set(1,0,0); axis.normalize();
 
     const prevPoint=(bcCurrent ? pointOnBigCircle(bcCurrent,phase) : (lastPoint || new THREE.Vector3(0,0,1)));
@@ -390,8 +381,8 @@ function update(dt){
     carOffset.position.y=carHeight-rodHeight;
 
     const PITCH_MAX=Math.PI/3, YAW_MAX=Math.PI/3;
-    const pitch = -PITCH_MAX * stickY; // up stick -> nose down
-    const yaw   =  YAW_MAX * stickX;   // right stick -> nose right
+    const pitch = -PITCH_MAX * stickY; // up -> nose down
+    const yaw   =  YAW_MAX * stickX;   // right -> nose right
     const qYaw   = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
     const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), pitch);
     carAim.quaternion.copy(qYaw.multiply(qPitch));
@@ -402,11 +393,12 @@ function update(dt){
     drawStick(); return;
   }
 
-  /* DAR ON — ARL mirrors ARR exactly (opposite travel and spin) */
+  /* DAR ON — show 4 small rings continuously + active ring motion */
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
-  let phi=Math.atan2(stickY,stickX);
+  renderDarSet(alpha, darMode); // <<< always visible when DAR ON
 
+  let phi=Math.atan2(stickY,stickX);
   let travelDir, spinDir;
   if(darMode==='ARR'){ phi-=Math.PI/2; travelDir=+1; spinDir=-1; }  // ARR: +90° CW
   else               { phi+=Math.PI/2; travelDir=-1; spinDir=+1; }  // ARL: +90° CCW
