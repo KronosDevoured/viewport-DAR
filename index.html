@@ -297,14 +297,12 @@ function makeQuatAimWithUp(fwd, upPref, prevUp){
 /* big circle through two points (unit) */
 function bigCircleFromTwoPoints(pA,pB){
   const n=pA.clone().cross(pB).normalize(); // plane normal
-  // if nearly collinear, pick a stable fallback normal
   if(!Number.isFinite(n.x) || n.lengthSq()<1e-8){
     const fallback=new THREE.Vector3(0,1,0).cross(pA).normalize();
     n.copy(fallback.lengthSq()<1e-8 ? new THREE.Vector3(1,0,0) : fallback);
   }
-  const {u,v}=framePerp(n);             // basis in the plane
-  // compute phase where point = pA
-  const tA=Math.atan2(pA.dot(v),pA.dot(u));
+  const {u,v}=framePerp(n);
+  const tA=Math.atan2(pA.dot(v),pA.dot(u)); // phase of pA
   return {u,v,axis:n,tA};
 }
 function pointOnBigCircle(bc,t){ return bc.u.clone().multiplyScalar(Math.cos(t)).add(bc.v.clone().multiplyScalar(Math.sin(t))); }
@@ -326,7 +324,7 @@ function activeColorByStick(x,y){
 }
 
 /* update */
-const angVelBase=2.2; // slightly faster
+const angVelBase=2.2;
 function update(dt){
   pollGamepad();
   const r=Math.hypot(stickX,stickY);
@@ -357,12 +355,11 @@ function update(dt){
     // smooth aim to front, zero roll
     const fwd=idleTarget.clone().sub(rodAnchor).normalize();
     const {q,realUp}=makeQuatAimWithUp(fwd,new THREE.Vector3(0,1,0),lastUpWorld);
-    const lerp=1-Math.exp(-dt*12); // smoothing
-    THREE.Quaternion.slerp(carAim.quaternion,q,carAim.quaternion,lerp);
+    const lerp=1-Math.exp(-dt*12);
+    carAim.quaternion.slerp(q, lerp);
     carSpin.quaternion.identity(); lastUpWorld.copy(realUp);
 
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
-    // stake
     const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,idleTarget.x,idleTarget.y,idleTarget.z); pa.needsUpdate=true;
 
     drawStick(); return;
@@ -370,7 +367,6 @@ function update(dt){
 
   /* DAR OFF — ring through stick direction AND front */
   if(!darActive){
-    // stick direction on sphere (XY plane)
     const stickDir=new THREE.Vector3(stickX,stickY,0);
     if(stickDir.lengthSq()<1e-10) stickDir.set(1,0,0);
     stickDir.normalize();
@@ -384,26 +380,21 @@ function update(dt){
     activeLine.visible=true;
     activeMat.color.setHex(0xffffff);
 
-    // express previous point in new basis to keep phase continuity
     const x=prevPoint.dot(bc.u), y=prevPoint.dot(bc.v);
     phase=Math.atan2(y,x);
-    // spin speed scales with stick magnitude
-    const speed=angVelBase * r; // proportional to deflection
+    const speed=angVelBase * r;
     phase += speed*dt;
     bcCurrent=bc; cfCurrent=null;
 
-    // current dot and visuals
     const noseTarget=pointOnBigCircle(bcCurrent,phase);
     lastPoint=noseTarget.clone(); noseMarker.position.copy(noseTarget);
 
-    // stake
     const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
 
-    // car aim: smooth, no roll
     const fwd=noseTarget.clone().sub(rodAnchor).normalize();
     const {q,realUp}=makeQuatAimWithUp(fwd,new THREE.Vector3(0,1,0),lastUpWorld);
-    const lerp=1-Math.exp(-dt*12); // smooth follow
-    THREE.Quaternion.slerp(carAim.quaternion,q,carAim.quaternion,lerp);
+    const lerp=1-Math.exp(-dt*12);
+    carAim.quaternion.slerp(q, lerp);
     carSpin.quaternion.identity(); lastUpWorld.copy(realUp);
 
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
@@ -440,14 +431,12 @@ function update(dt){
   const noseTarget=pointOnCircle(cfCurrent,phase);
   lastPoint=noseTarget.clone(); noseMarker.position.copy(noseTarget);
 
-  // stake
   const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
 
-  // aim with smooth slerp; roll from phase
   const stakeDir=noseTarget.clone().sub(rodAnchor).normalize();
   const {q,realUp}=makeQuatAimWithUp(stakeDir,new THREE.Vector3(0,1,0),lastUpWorld);
   const lerp=1-Math.exp(-dt*12);
-  THREE.Quaternion.slerp(carAim.quaternion,q,carAim.quaternion,lerp);
+  carAim.quaternion.slerp(q, lerp);
   lastUpWorld.copy(realUp);
 
   const rollAngle = spinDir * (phase - phaseZero);
