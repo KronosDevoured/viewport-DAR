@@ -174,7 +174,7 @@ function drawCircle(cf,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=cf.t0+(k/RIN
 function renderDarSet(mode){
   const alpha = THREE.MathUtils.degToRad(30);
   const modeShift = (mode==='ARL') ? +Math.PI/2 : -Math.PI/2;
-  const offsets=[ Math.PI/2, -Math.PI/2, 0, Math.PI ]; // Up,Down,Right,Left
+  const offsets=[ Math.PI/2, -Math.PI/2, 0, Math.PI ];
   for(let i=0;i<4;i++){
     const cf = circleFrame(alpha, modeShift + offsets[i]);
     drawCircle(cf, darRings[i].buf);
@@ -191,9 +191,9 @@ const activeLine=new THREE.Line(activeGeo,activeMat); activeLine.visible=false; 
 
 /* car rig */
 const carRoot=new THREE.Group(); scene.add(carRoot);
-const carAim=new THREE.Group(); carRoot.add(carAim);        // full orientation node
-const carSpin=new THREE.Group(); carAim.add(carSpin);       // extra roll node for DAR ON
-const carOffset=new THREE.Group(); carSpin.add(carOffset);  // mesh offset
+const carAim=new THREE.Group(); carRoot.add(carAim);
+const carSpin=new THREE.Group(); carAim.add(carSpin);
+const carOffset=new THREE.Group(); carSpin.add(carOffset);
 let carMesh=null;
 let carScale=0.010, rodHeight=-0.200, carHeight=-0.200;
 carRoot.position.set(0,rodHeight,0); carOffset.position.y=carHeight-rodHeight;
@@ -286,8 +286,8 @@ function aimQuatFixedUp(fwd){
   up.normalize();
   const right=up.clone().cross(f).normalize();
   const realUp=f.clone().cross(right).normalize();
-  const m=new THREE.Matrix4().makeBasis(right,realUp,f);
-  return new THREE.Quaternion().setFromRotationMatrix(m);
+  const mat=new THREE.Matrix4().makeBasis(right,realUp,f);
+  return new THREE.Quaternion().setFromRotationMatrix(mat);
 }
 function bigCircleFromTwoPoints(pA,pB){
   const n=pA.clone().cross(pB).normalize();
@@ -301,18 +301,6 @@ function bigCircleFromTwoPoints(pA,pB){
 }
 function pointOnBigCircle(bc,t){ return bc.u.clone().multiplyScalar(Math.cos(t)).add(bc.v.clone().multiplyScalar(Math.sin(t))); }
 function drawBigCircle(bc,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=bc.tA+(k/RING_SEGS)*Math.PI*2; const p=pointOnBigCircle(bc,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
-function circleFrame(alpha,phi){
-  const ca=Math.cos(alpha), sa=Math.sin(alpha);
-  const c=new THREE.Vector3(Math.sin(alpha)*Math.cos(phi),Math.sin(alpha)*Math.sin(phi),Math.cos(alpha)).normalize();
-  const tmp=Math.abs(c.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0);
-  const u=tmp.clone().cross(c).normalize(); const v=c.clone().cross(u).normalize();
-  const w=new THREE.Vector3(0,0,1).sub(c.clone().multiplyScalar(ca)).multiplyScalar(1/Math.max(1e-6,sa));
-  const t0=Math.atan2(w.dot(v),w.dot(u));
-  return {c,ca,sa,u,v,t0};
-}
-function pointOnCircle(cf,t){ return cf.c.clone().multiplyScalar(cf.ca).add(cf.u.clone().multiplyScalar(Math.cos(t)*cf.sa)).add(cf.v.clone().multiplyScalar(Math.sin(t)*cf.sa)); }
-function drawCircle(cf,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=cf.t0+(k/RING_SEGS)*Math.PI*2; const p=pointOnCircle(cf,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
-function framePerp(a){ const tmp=Math.abs(a.z)<0.9?new THREE.Vector3(0,0,1):new THREE.Vector3(0,1,0); const u=tmp.clone().cross(a).normalize(); const v=a.clone().cross(u).normalize(); return {u,v}; }
 function angDiff(a,b){ let d=a-b; while(d> Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; return d; }
 function getForward(q){ return new THREE.Vector3(0,0,1).applyQuaternion(q).normalize(); }
 
@@ -339,7 +327,6 @@ function hardReset(){
   cfCurrent=null; bcCurrent=null; phase=0; phaseStart=0; lastPoint=null;
   morph.value="0"; morphTag.textContent="0.000";
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
-  // start pose: nose +Z, roof +Y
   const startQ=aimQuatFixedUp(new THREE.Vector3(0,0,1));
   carAim.quaternion.copy(startQ); zeroRoll();
 }
@@ -410,21 +397,19 @@ function update(dt){
 
     const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
 
-    // Angular velocity integration
-    const nAxis = bcCurrent.axis.clone().normalize();          // circle axis
-    const omega_path = nAxis.clone().multiplyScalar(speed);    // rad/s about axis
-    const fwd = getForward(carAim.quaternion);                 // current nose
+    const nAxis = bcCurrent.axis.clone().normalize();
+    const omega_path = nAxis.clone().multiplyScalar(speed);
+    const fwd = getForward(carAim.quaternion);
     const desired = noseTarget.clone().sub(rodAnchor).normalize();
-    const corrAxis = fwd.clone().cross(desired);               // steer toward path
-    const kAlign = 6.0;                                        // alignment gain
-    const omega = omega_path.add(corrAxis.multiplyScalar(kAlign)); // total ω
-
+    const corrAxis = fwd.clone().cross(desired);
+    const kAlign = 6.0;
+    const omega = omega_path.add(corrAxis.multiplyScalar(kAlign));
     const mag = omega.length();
     if(mag>1e-6){
       const dq = new THREE.Quaternion().setFromAxisAngle(omega.normalize(), mag*dt);
       carAim.quaternion.premultiply(dq);
     }
-    carSpin.quaternion.identity(); // no extra roll node DAR OFF
+    carSpin.quaternion.identity();
 
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     drawStick();
@@ -468,10 +453,7 @@ function update(dt){
 
   const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
 
-  // Aim by parallel transport for smoothness, then add explicit roll node 1:1
   const stakeDir=noseTarget.clone().sub(rodAnchor).normalize();
-
-  // Build PT without world-up constraint
   const fwdNow = getForward(carAim.quaternion);
   const qDelta = new THREE.Quaternion().setFromUnitVectors(fwdNow, stakeDir);
   const upGuess = new THREE.Vector3(0,1,0).applyQuaternion(carAim.quaternion);
@@ -479,9 +461,8 @@ function update(dt){
   upT.sub(stakeDir.clone().multiplyScalar(upT.dot(stakeDir))).normalize();
   const right=upT.clone().cross(stakeDir).normalize();
   const realUp=stakeDir.clone().cross(right).normalize();
-  const m=new THREE.Matrix4().makeBasis(right,realUp,stakeDir);
-  const qPT=new THREE.Quaternion().setFromRotationMatrix(m);
-
+  const mat=new THREE.Matrix4().makeBasis(right,realUp,stakeDir);
+  const qPT=new THREE.Quaternion().setFromRotationMatrix(mat);
   const lerp=1-Math.exp(-dt*12);
   carAim.quaternion.slerp(qPT, lerp);
 
@@ -493,7 +474,6 @@ function update(dt){
 }
 
 /* animate */
-let lastTime=performance.now();
 function tick(){ const now=performance.now(); const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now; update(dt); controls.update(); renderer.render(scene,camera); requestAnimationFrame(tick); }
 
 /* boot */
