@@ -324,7 +324,7 @@ function angDiff(a,b){ let d=a-b; while(d> Math.PI) d-=2*Math.PI; while(d<-Math.
 /* state */
 let cfCurrent=null, bcCurrent=null;
 let phase=0, lastPoint=null;
-let phaseStart=0;                 // for 1:1 roll-on-DAR
+let phaseStart=0;
 let lastTime=performance.now();
 let lastUpWorld=new THREE.Vector3(0,1,0);
 let lastFwdWorld=new THREE.Vector3(0,0,1);
@@ -445,19 +445,16 @@ function update(dt){
   activeLine.visible=true;
   activeMat.color.setHex(activeColorByStick(stickX,stickY));
 
-  // Reproject previous point to new frame to get continuous phase
   const center=cf.c.clone().multiplyScalar(cf.ca);
   const qv=prevPointDAR.clone().normalize().sub(center);
   const x2=qv.dot(cf.u), y2=qv.dot(cf.v);
   const phaseProj=Math.atan2(y2,x2);
 
-  // Detect track change to set a stable phaseStart once
   const changed = (!cfCurrent) || (darMode!==prevDarMode) ||
                   (Math.abs(alpha-prevAlpha)>1e-5) ||
                   (Math.abs(angDiff(phi,prevPhi))>1e-5);
   if(changed){ phase=phaseProj; phaseStart=phaseProj; }
 
-  // Advance
   const speedDAR=angVelBase*(0.3+0.7*(alpha/aMax));
   phase += travelDir*speedDAR*dt;
 
@@ -475,7 +472,6 @@ function update(dt){
   carAim.quaternion.slerp(q, lerp);
   lastUpWorld.copy(realUp); lastFwdWorld.copy(newFwd);
 
-  // 1:1 roll with circle progress
   const rollAngle = spinDir * (phase - phaseStart);
   carSpin.quaternion.setFromAxisAngle(new THREE.Vector3(0,0,1), rollAngle);
 
@@ -484,7 +480,6 @@ function update(dt){
 }
 
 /* animate */
-let rodHeight=-0.200, carHeight=-0.200;
 function tick(){ const now=performance.now(); const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now; update(dt); controls.update(); renderer.render(scene,camera); requestAnimationFrame(tick); }
 
 /* boot */
