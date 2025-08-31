@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — fixed non-DAR (free spin), DAR 1:1 spin</title>
+<title>DAR Rings — fixed non-DAR (free spin), DAR roll sync</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -81,7 +81,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">DAR OFF: continuous free spin, no world-up, no flips. DAR ON: car spin = circle progress 1:1. Deadzone snaps to start.</div>
+    <div class="hint">DAR OFF: continuous free spin. DAR ON: roll synced 1:1 with circle. Deadzone snaps to start.</div>
   </div>
 </div>
 
@@ -310,6 +310,7 @@ let phase=0, lastPoint=null;
 let phaseStart=0;
 let lastTime=performance.now();
 let prevDarMode='OFF', prevAlpha=0, prevPhi=0;
+let rollPhase=0; // NEW: separate roll integrator
 
 /* colors */
 function activeColorByStick(x,y){
@@ -327,6 +328,7 @@ function hardReset(){
   cfCurrent=null; bcCurrent=null; phase=0; phaseStart=0; lastPoint=null;
   morph.value="0"; morphTag.textContent="0.000";
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
+  rollPhase=0;
   const startQ=aimQuatFixedUp(new THREE.Vector3(0,0,1));
   carAim.quaternion.copy(startQ); zeroRoll();
 }
@@ -336,7 +338,7 @@ function resetToStartImmediate(rodAnchor){
   const q=aimQuatFixedUp(start.clone().sub(rodAnchor));
   carAim.quaternion.copy(q);
   zeroRoll();
-  cfCurrent=null; bcCurrent=null; phase=0; phaseStart=0; lastPoint=null;
+  cfCurrent=null; bcCurrent=null; phase=0; phaseStart=0; lastPoint=null; rollPhase=0;
   const pa=stake.geometry.getAttribute('position');
   pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z);
   pa.setXYZ(1,start.x,start.y,start.z);
@@ -369,11 +371,11 @@ function update(dt){
     resetToStartImmediate(rodAnchor);
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     drawStick();
-    prevDarMode=darMode; prevAlpha=0; prevPhi=0;
+    prevDarMode=darMode; prevAlpha=0; prevPhi=0; rollPhase=0;
     return;
   }
 
-  /* DAR OFF — big circle, integrate orientation (free spin, no flips) */
+  /* DAR OFF — big circle, integrate orientation (free spin) */
   if(!darActive){
     const stickDir=new THREE.Vector3(stickX,stickY,0); if(stickDir.lengthSq()<1e-10) stickDir.set(1,0,0);
     stickDir.normalize();
@@ -410,6 +412,7 @@ function update(dt){
       carAim.quaternion.premultiply(dq);
     }
     carSpin.quaternion.identity();
+    rollPhase=0; // keep roll cleared while DAR OFF
 
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     drawStick();
@@ -417,7 +420,7 @@ function update(dt){
     return;
   }
 
-  /* DAR ON — active ring; roll exactly matches phase progress */
+  /* DAR ON — active ring; rollPhase integrated 1:1 with path time */
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
   let phi=Math.atan2(stickY,stickX);
@@ -440,10 +443,15 @@ function update(dt){
   const changed = (!cfCurrent) || (darMode!==prevDarMode) ||
                   (Math.abs(alpha-prevAlpha)>1e-5) ||
                   (Math.abs(angDiff(phi,prevPhi))>1e-5);
-  if(changed){ phase=phaseProj; phaseStart=phaseProj; }
+  if(changed){ phase=phaseProj; phaseStart=phaseProj; rollPhase=0; }
 
   const speedDAR=angVelBase*(0.3+0.7*(alpha/aMax));
   phase += travelDir*speedDAR*dt;
+
+  // roll synced exactly to traversal time
+  rollPhase += travelDir*speedDAR*dt;
+  if (rollPhase >  Math.PI) rollPhase -= 2*Math.PI;
+  if (rollPhase < -Math.PI) rollPhase += 2*Math.PI;
 
   cfCurrent=cf; bcCurrent=null;
   prevDarMode=darMode; prevAlpha=alpha; prevPhi=phi;
@@ -461,12 +469,12 @@ function update(dt){
   upT.sub(stakeDir.clone().multiplyScalar(upT.dot(stakeDir))).normalize();
   const right=upT.clone().cross(stakeDir).normalize();
   const realUp=stakeDir.clone().cross(right).normalize();
-  const mat=new THREE.Matrix4().makeBasis(right,realUp,stakeDir);
-  const qPT=new THREE.Quaternion().setFromRotationMatrix(mat);
+  const basisMat2=new THREE.Matrix4().makeBasis(right,realUp,stakeDir);
+  const qPT=new THREE.Quaternion().setFromRotationMatrix(basisMat2);
   const lerp=1-Math.exp(-dt*12);
   carAim.quaternion.slerp(qPT, lerp);
 
-  const rollAngle = spinDir * (phase - phaseStart);
+  const rollAngle = spinDir * rollPhase;
   carSpin.quaternion.setFromAxisAngle(new THREE.Vector3(0,0,1), rollAngle);
 
   carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
