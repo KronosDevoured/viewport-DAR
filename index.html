@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — deadzone snap + no roll when DAR off</title>
+<title>DAR Rings — strict deadzone reset + no-roll when DAR OFF</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -81,7 +81,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Deadzone snaps car to start, zero roll. DAR OFF never rolls.</div>
+    <div class="hint">Deadzone: snap to start, roof up, zero roll, reset phase. DAR OFF: pitch/yaw only, no roll.</div>
   </div>
 </div>
 
@@ -108,18 +108,20 @@ const controls=new OrbitControls(camera,renderer.domElement); controls.enableDam
 scene.add(new THREE.HemisphereLight(0xd9e6ff,0x17202c,0.9));
 const dl=new THREE.DirectionalLight(0xffffff,0.6); dl.position.set(2,3,1); scene.add(dl);
 
-/* reference sphere + grid + axes */
+/* references */
 scene.add(new THREE.Mesh(new THREE.SphereGeometry(1,64,48),
   new THREE.MeshPhongMaterial({color:0x0e141d,specular:0x111111,shininess:10,transparent:true,opacity:0.25})
 ));
 const grid=new THREE.GridHelper(8,16,0x2a3342,0x1d2430); grid.position.y=-1.25; scene.add(grid);
 scene.add(new THREE.AxesHelper(1.25));
+const pivot=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12),new THREE.MeshBasicMaterial({color:0xff4444}));
+pivot.position.set(0,0,1); scene.add(pivot);
 
 /* constants */
 const RING_SEGS=256, N=RING_SEGS+1, EPS=1e-6;
 const DEADZONE=0.08;
 
-/* great circles — muted grays */
+/* great circles — muted */
 const baseMats=[
   new THREE.LineBasicMaterial({color:0x6b7380, transparent:true, opacity:0.45, depthTest:false}),
   new THREE.LineBasicMaterial({color:0x6b7380, transparent:true, opacity:0.45, depthTest:false}),
@@ -146,7 +148,7 @@ function greatCirclePerAxis(axis,arr){
 function drawGreatCircles(){ for(const r of rings){ greatCirclePerAxis(r.axis,r.cur); r.line.geometry.attributes.position.needsUpdate=true; } }
 function setGreatOpacity(darActive){ for(const r of rings){ r.line.material.opacity = darActive ? 0.30 : 0.45; } }
 
-/* four small DAR rings */
+/* DAR small rings */
 const darColors=[0xff5c5c,0x53d769,0x4c8dff,0xffd166]; // Up,Down,Right,Left
 const darRings=[];
 for(let i=0;i<4;i++){
@@ -193,8 +195,8 @@ const activeLine=new THREE.Line(activeGeo,activeMat); activeLine.visible=false; 
 /* car rig */
 const carRoot=new THREE.Group(); scene.add(carRoot);
 const carAim=new THREE.Group(); carRoot.add(carAim);
-const carSpin=new THREE.Group(); carAim.add(carSpin);
-const carOffset=new THREE.Group(); carSpin.add(carOffset);
+const carSpin=new THREE.Group(); carAim.add(carSpin);       // roll-only node
+const carOffset=new THREE.Group(); carSpin.add(carOffset);  // mesh offset node
 let carMesh=null;
 let carScale=0.010, rodHeight=-0.200, carHeight=-0.200;
 carRoot.position.set(0,rodHeight,0); carOffset.position.y=carHeight-rodHeight;
@@ -278,7 +280,7 @@ function drawStick(){
   const kx=cx+stickX*R, ky=cy-stickY*R; ctx.beginPath(); ctx.arc(kx,ky,6*DPR,0,Math.PI*2); ctx.fillStyle='#e7ecf3'; ctx.fill(); ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
 }
 
-/* pole-safe aiming */
+/* pole-safe aiming: parallel transport last up to new forward */
 function aimQuatParallelTransport(fwd, lastFwd, lastUp){
   const f=fwd.clone().normalize();
   let lf=lastFwd.clone().normalize(); if(lf.lengthSq()<1e-9) lf.set(0,0,1);
@@ -327,50 +329,50 @@ function activeColorByStick(x,y){
   return darColors[3];
 }
 
+/* helpers */
+function zeroRoll(){ carSpin.quaternion.identity(); }
+
 /* update */
 const angVelBase=2.2;
 function resetToStart(rodAnchor){
+  // front point + roof up, zero roll, reset motion state
   const start=new THREE.Vector3(0,0,1);
   noseMarker.position.copy(start);
   const fwd=start.clone().sub(rodAnchor).normalize();
   const {q,realUp,newFwd}=aimQuatParallelTransport(fwd, lastFwdWorld, lastUpWorld);
-  const lerp=1-Math.exp(-0.016*12); // approx one frame
+  const lerp=1-Math.exp(-0.016*12);
   carAim.quaternion.slerp(q, lerp);
-  carSpin.quaternion.identity();                 // zero roll
+  zeroRoll();
   lastUpWorld.copy(realUp); lastFwdWorld.copy(newFwd);
-  // hard reset motion state so re-entry starts at front
   cfCurrent=null; bcCurrent=null; phase=0; phaseZero=0; lastPoint=null;
-  // stake
   const pa=stake.geometry.getAttribute('position');
   pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z);
   pa.setXYZ(1,start.x,start.y,start.z);
   pa.needsUpdate=true;
 }
 function update(dt){
-  // show 4 DAR preview when DAR active and idle; dim great circles when DAR active
-  function showIdleGuides(darActive){
-    drawGreatCircles(); setGreatOpacity(darActive);
-    for(const rL of rings) rL.line.visible=true;
-    if(darActive){ renderDarSet(darMode); }
-  }
-
-  // inputs
   pollGamepad();
   const r=Math.hypot(stickX,stickY);
   const m=Math.min(1,Math.max(0,r));
   morph.value=String(m); morphTag.textContent=m.toFixed(3);
 
-  // default visibility
   for(const dr of darRings) dr.line.visible=false;
   for(const rL of rings) rL.line.visible=false;
 
   const darActive = (darMode==='ARL' || darMode==='ARR');
   const rodAnchor=new THREE.Vector3(0,rodHeight,0);
 
-  // Deadzone: snap to starting position, zero roll, reset phase
+  // Guides visible on idle
+  function showIdleGuides(){
+    drawGreatCircles(); setGreatOpacity(darActive);
+    for(const rL of rings) rL.line.visible=true;
+    if(darActive){ renderDarSet(darMode); }
+  }
+
+  // Deadzone: enforce reset regardless of DAR mode
   if(m<=DEADZONE+EPS){
     activeLine.visible=false;
-    showIdleGuides(darActive);
+    showIdleGuides();
     resetToStart(rodAnchor);
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     drawStick(); return;
@@ -405,14 +407,14 @@ function update(dt){
     const {q,realUp,newFwd}=aimQuatParallelTransport(fwd, lastFwdWorld, lastUpWorld);
     const lerp=1-Math.exp(-dt*12);
     carAim.quaternion.slerp(q, lerp);
-    carSpin.quaternion.identity();                // enforce no roll
+    zeroRoll();                                        // no roll when DAR OFF
     lastUpWorld.copy(realUp); lastFwdWorld.copy(newFwd);
 
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     drawStick(); return;
   }
 
-  /* DAR ON — active DAR ring; roll allowed */
+  /* DAR ON — active DAR ring, roll allowed */
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
   let phi=Math.atan2(stickY,stickX);
