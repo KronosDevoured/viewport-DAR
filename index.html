@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — fixed non-DAR (free spin), DAR roll sync</title>
+<title>DAR Rings — roll = arc travel</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -81,7 +81,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">DAR OFF: continuous free spin. DAR ON: roll synced 1:1 with circle. Deadzone snaps to start.</div>
+    <div class="hint">DAR OFF: free spin. DAR ON: roll = actual arc travel. Deadzone snaps to start.</div>
   </div>
 </div>
 
@@ -169,8 +169,8 @@ function circleFrame(alpha,phi){
   const t0=Math.atan2(w.dot(v),w.dot(u));
   return {c,ca,sa,u,v,t0};
 }
-function pointOnCircle(cf,t){ return cf.c.clone().multiplyScalar(cf.ca).add(cf.u.clone().multiplyScalar(Math.cos(t)*cf.sa)).add(cf.v.clone().multiplyScalar(Math.sin(t)*cf.sa)); }
-function drawCircle(cf,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=cf.t0+(k/RING_SEGS)*Math.PI*2; const p=pointOnCircle(cf,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
+function pointOnCircle(cf,t){ const T=cf.t0+t; return cf.c.clone().multiplyScalar(cf.ca).add(cf.u.clone().multiplyScalar(Math.cos(T)*cf.sa)).add(cf.v.clone().multiplyScalar(Math.sin(T)*cf.sa)); }
+function drawCircle(cf,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=(k/RING_SEGS)*Math.PI*2; const p=pointOnCircle(cf,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
 function renderDarSet(mode){
   const alpha = THREE.MathUtils.degToRad(30);
   const modeShift = (mode==='ARL') ? +Math.PI/2 : -Math.PI/2;
@@ -300,45 +300,37 @@ function bigCircleFromTwoPoints(pA,pB){
   return {u,v,axis:n,tA};
 }
 function pointOnBigCircle(bc,t){ return bc.u.clone().multiplyScalar(Math.cos(t)).add(bc.v.clone().multiplyScalar(Math.sin(t))); }
-function drawBigCircle(bc,arr){ for(let k=0;k<=RING_SEGS;k++){ const t=bc.tA+(k/RING_SEGS)*Math.PI*2; const p=pointOnBigCircle(bc,t); const i3=3*k; arr[i3]=p.x; arr[i3+1]=p.y; arr[i3+2]=p.z; } }
-function angDiff(a,b){ let d=a-b; while(d> Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; return d; }
 function getForward(q){ return new THREE.Vector3(0,0,1).applyQuaternion(q).normalize(); }
+function wrapPi(d){ while(d> Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; return d; }
 
 /* state */
 let cfCurrent=null, bcCurrent=null;
 let phase=0, lastPoint=null;
-let phaseStart=0;
-let lastTime=performance.now();
 let prevDarMode='OFF', prevAlpha=0, prevPhi=0;
-let rollPhase=0; // NEW: separate roll integrator
 
-/* colors */
-function activeColorByStick(x,y){
-  const a=Math.atan2(y,x);
-  if(a> Math.PI/4 && a<= 3*Math.PI/4) return darColors[0];
-  if(a<=-Math.PI/4 && a> -3*Math.PI/4) return darColors[1];
-  if(a>-Math.PI/4 && a<= Math.PI/4) return darColors[2];
-  return darColors[3];
-}
-function zeroRoll(){ carSpin.quaternion.identity(); }
+let darTheta=0;          // path parameter
+let thetaUnwrapped=0;    // geometric arc-travel accumulator for roll
+let prevThetaOnCF=null;  // previous theta in current circle frame
+let lastNosePos=null;    // previous 3D nose point for robust delta
 
 /* resets */
 function hardReset(){
   camera.position.set(2.3,1.6,2.5); controls.target.set(0,0,0); controls.update();
-  cfCurrent=null; bcCurrent=null; phase=0; phaseStart=0; lastPoint=null;
+  cfCurrent=null; bcCurrent=null; phase=0; lastPoint=null;
+  darTheta=0; thetaUnwrapped=0; prevThetaOnCF=null; lastNosePos=null;
   morph.value="0"; morphTag.textContent="0.000";
   darMode='OFF'; btnARL.setAttribute('aria-pressed','false'); btnARR.setAttribute('aria-pressed','false');
-  rollPhase=0;
   const startQ=aimQuatFixedUp(new THREE.Vector3(0,0,1));
-  carAim.quaternion.copy(startQ); zeroRoll();
+  carAim.quaternion.copy(startQ); carSpin.quaternion.identity();
 }
 function resetToStartImmediate(rodAnchor){
   const start=new THREE.Vector3(0,0,1);
   noseMarker.position.copy(start);
   const q=aimQuatFixedUp(start.clone().sub(rodAnchor));
   carAim.quaternion.copy(q);
-  zeroRoll();
-  cfCurrent=null; bcCurrent=null; phase=0; phaseStart=0; lastPoint=null; rollPhase=0;
+  carSpin.quaternion.identity();
+  cfCurrent=null; bcCurrent=null; phase=0; lastPoint=null;
+  darTheta=0; thetaUnwrapped=0; prevThetaOnCF=null; lastNosePos=null;
   const pa=stake.geometry.getAttribute('position');
   pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z);
   pa.setXYZ(1,start.x,start.y,start.z);
@@ -371,11 +363,10 @@ function update(dt){
     resetToStartImmediate(rodAnchor);
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     drawStick();
-    prevDarMode=darMode; prevAlpha=0; prevPhi=0; rollPhase=0;
+    prevDarMode=darMode; prevAlpha=0; prevPhi=0;
     return;
   }
 
-  /* DAR OFF — big circle, integrate orientation (free spin) */
   if(!darActive){
     const stickDir=new THREE.Vector3(stickX,stickY,0); if(stickDir.lengthSq()<1e-10) stickDir.set(1,0,0);
     stickDir.normalize();
@@ -412,7 +403,7 @@ function update(dt){
       carAim.quaternion.premultiply(dq);
     }
     carSpin.quaternion.identity();
-    rollPhase=0; // keep roll cleared while DAR OFF
+    thetaUnwrapped=0; prevThetaOnCF=null; lastNosePos=null;
 
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     drawStick();
@@ -420,7 +411,7 @@ function update(dt){
     return;
   }
 
-  /* DAR ON — active ring; rollPhase integrated 1:1 with path time */
+  /* DAR ON */
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
   let phi=Math.atan2(stickY,stickX);
@@ -428,40 +419,44 @@ function update(dt){
   if(darMode==='ARR'){ phi-=Math.PI/2; travelDir=+1; spinDir=+1; }
   else               { phi+=Math.PI/2; travelDir=-1; spinDir=+1; }
 
-  const prevPointDAR=(cfCurrent?pointOnCircle(cfCurrent,phase):(lastPoint||new THREE.Vector3(0,0,1)));
   const cf=circleFrame(alpha,phi);
   drawCircle(cf,activeGeo.attributes.position.array);
   activeGeo.attributes.position.needsUpdate=true;
   activeLine.visible=true;
   activeMat.color.setHex(activeColorByStick(stickX,stickY));
 
-  const center=cf.c.clone().multiplyScalar(cf.ca);
-  const qv=prevPointDAR.clone().normalize().sub(center);
-  const x2=qv.dot(cf.u), y2=qv.dot(cf.v);
-  const phaseProj=Math.atan2(y2,x2);
-
-  const changed = (!cfCurrent) || (darMode!==prevDarMode) ||
-                  (Math.abs(alpha-prevAlpha)>1e-5) ||
-                  (Math.abs(angDiff(phi,prevPhi))>1e-5);
-  if(changed){ phase=phaseProj; phaseStart=phaseProj; rollPhase=0; }
-
   const speedDAR=angVelBase*(0.3+0.7*(alpha/aMax));
-  phase += travelDir*speedDAR*dt;
+  darTheta += travelDir*speedDAR*dt;
 
-  // roll synced exactly to traversal time
-  rollPhase += travelDir*speedDAR*dt;
-  if (rollPhase >  Math.PI) rollPhase -= 2*Math.PI;
-  if (rollPhase < -Math.PI) rollPhase += 2*Math.PI;
+  const noseTarget=pointOnCircle(cf,darTheta);
+  noseMarker.position.copy(noseTarget);
+
+  // geometric arc delta in current frame
+  const center=cf.c.clone().multiplyScalar(cf.ca);
+  const u=cf.u, v=cf.v;
+  const currVec=noseTarget.clone().sub(center).normalize();
+  const currTheta=Math.atan2(currVec.dot(v), currVec.dot(u));
+
+  if(lastNosePos===null){
+    lastNosePos=noseTarget.clone();
+    prevThetaOnCF=currTheta;
+  }else{
+    const prevVec=lastNosePos.clone().sub(center).normalize();
+    const prevTheta=Math.atan2(prevVec.dot(v), prevVec.dot(u));
+    const dTheta=wrapPi(currTheta - prevTheta);
+    thetaUnwrapped += dTheta;
+    prevThetaOnCF=currTheta;
+    lastNosePos.copy(noseTarget);
+  }
 
   cfCurrent=cf; bcCurrent=null;
   prevDarMode=darMode; prevAlpha=alpha; prevPhi=phi;
 
-  const noseTarget=pointOnCircle(cfCurrent,phase);
-  lastPoint=noseTarget.clone(); noseMarker.position.copy(noseTarget);
+  const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,0,rodHeight,0); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
 
-  const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
-
-  const stakeDir=noseTarget.clone().sub(rodAnchor).normalize();
+  // aim, then roll by accumulated arc
+  const rodAnchor2=new THREE.Vector3(0,rodHeight,0);
+  const stakeDir=noseTarget.clone().sub(rodAnchor2).normalize();
   const fwdNow = getForward(carAim.quaternion);
   const qDelta = new THREE.Quaternion().setFromUnitVectors(fwdNow, stakeDir);
   const upGuess = new THREE.Vector3(0,1,0).applyQuaternion(carAim.quaternion);
@@ -469,20 +464,29 @@ function update(dt){
   upT.sub(stakeDir.clone().multiplyScalar(upT.dot(stakeDir))).normalize();
   const right=upT.clone().cross(stakeDir).normalize();
   const realUp=stakeDir.clone().cross(right).normalize();
-  const basisMat2=new THREE.Matrix4().makeBasis(right,realUp,stakeDir);
-  const qPT=new THREE.Quaternion().setFromRotationMatrix(basisMat2);
+  const basisMat=new THREE.Matrix4().makeBasis(right,realUp,stakeDir);
+  const qPT=new THREE.Quaternion().setFromRotationMatrix(basisMat);
   const lerp=1-Math.exp(-dt*12);
   carAim.quaternion.slerp(qPT, lerp);
 
-  const rollAngle = spinDir * rollPhase;
+  const rollAngle = spinDir * thetaUnwrapped;
   carSpin.quaternion.setFromAxisAngle(new THREE.Vector3(0,0,1), rollAngle);
 
-  carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
+  carRoot.position.set(0,rodHeight,0); carOffset.position.y=carHeight-rodHeight;
   drawStick();
 }
 
 /* animate */
-function tick(){ const now=performance.now(); const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now; update(dt); controls.update(); renderer.render(scene,camera); requestAnimationFrame(tick); }
+let lastTime=performance.now();
+function tick(){
+  const now=performance.now();
+  const dt=Math.min(0.05,(now-lastTime)/1000);
+  lastTime=now;
+  update(dt);
+  controls.update();
+  renderer.render(scene,camera);
+  requestAnimationFrame(tick);
+}
 
 /* boot */
 drawGreatCircles(); setGreatOpacity(false); tick();
