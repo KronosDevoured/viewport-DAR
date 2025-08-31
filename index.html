@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>DAR Rings — strict deadzone reset + fixed-up aim when DAR OFF</title>
+<title>DAR Rings — minimal-roll (parallel transport) when DAR OFF</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1116;color:#e7ecf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
@@ -81,7 +81,7 @@
         <span class="chip"><span class="dot left"></span>Left</span>
       </div>
     </div>
-    <div class="hint">Deadzone: snap to start (nose +Z, roof +Y), zero roll, reset phase. DAR OFF: pitch/yaw only, no roll.</div>
+    <div class="hint">Deadzone: snap to start (nose +Z, roof +Y), zero roll. DAR OFF: minimal-roll parallel transport (no flips). DAR ON: active ring + roll.</div>
   </div>
 </div>
 
@@ -196,8 +196,8 @@ const activeLine=new THREE.Line(activeGeo,activeMat); activeLine.visible=false; 
 
 /* car rig */
 const carRoot=new THREE.Group(); scene.add(carRoot);
-const carAim=new THREE.Group(); carRoot.add(carAim);        // yaw/pitch towards dot
-const carSpin=new THREE.Group(); carAim.add(carSpin);       // roll only (zero when DAR OFF)
+const carAim=new THREE.Group(); carRoot.add(carAim);        // yaw/pitch + minimal roll via PT
+const carSpin=new THREE.Group(); carAim.add(carSpin);       // roll only for DAR ON
 const carOffset=new THREE.Group(); carSpin.add(carOffset);  // mesh offset
 let carMesh=null;
 let carScale=0.010, rodHeight=-0.200, carHeight=-0.200;
@@ -265,7 +265,7 @@ function dz(v){ return Math.abs(v)<DEADZONE?0:v; }
 function pollGamepad(){
   const pads=navigator.getGamepads?.()||[];
   for(const gp of pads){ if(!gp) continue; stickX=dz(gp.axes[0]||0); stickY=dz(-(gp.axes[1]||0)); return; }
-  // if no gamepad, keep current values (onscreen stick may drive these later)
+  // keep current values; touch stick may drive later
 }
 const stickCanvas=document.getElementById('stick'), sctx=stickCanvas.getContext('2d'); const DPR=Math.min(devicePixelRatio||1,2);
 stickCanvas.width=120*DPR; stickCanvas.height=120*DPR; stickCanvas.style.width='120px'; stickCanvas.style.height='120px';
@@ -286,24 +286,7 @@ function drawStick(){
   const kx=cx+stickX*R, ky=cy-stickY*R; ctx.beginPath(); ctx.arc(kx,ky,6*DPR,0,Math.PI*2); ctx.fillStyle='#e7ecf3'; ctx.fill(); ctx.strokeStyle='#1f2530'; ctx.lineWidth=1.5*DPR; ctx.stroke();
 }
 
-/* aiming helpers */
-function aimQuatFixedUp(fwd){
-  // Build orientation with world up=(0,1,0), no roll component.
-  const f=fwd.clone().normalize();
-  let up=new THREE.Vector3(0,1,0);
-  // make up orthogonal to f
-  up = up.sub(f.clone().multiplyScalar(up.dot(f)));
-  if(up.lengthSq()<1e-9){
-    const helper=(Math.abs(f.z)<0.9)? new THREE.Vector3(0,0,1): new THREE.Vector3(1,0,0);
-    up.copy(helper.sub(f.clone().multiplyScalar(helper.dot(f))));
-  }
-  up.normalize();
-  const right=up.clone().cross(f).normalize();
-  const realUp=f.clone().cross(right).normalize();
-  const m=new THREE.Matrix4().makeBasis(right,realUp,f);
-  const q=new THREE.Quaternion().setFromRotationMatrix(m);
-  return q;
-}
+/* aiming */
 function aimQuatParallelTransport(fwd, lastFwd, lastUp){
   const f=fwd.clone().normalize();
   let lf=lastFwd.clone().normalize(); if(lf.lengthSq()<1e-9) lf.set(0,0,1);
@@ -320,6 +303,21 @@ function aimQuatParallelTransport(fwd, lastFwd, lastUp){
   const m=new THREE.Matrix4().makeBasis(right,realUp,f);
   const q=new THREE.Quaternion().setFromRotationMatrix(m);
   return {q, realUp, newFwd:f};
+}
+function aimQuatFixedUp(fwd){
+  const f=fwd.clone().normalize();
+  let up=new THREE.Vector3(0,1,0);
+  up = up.sub(f.clone().multiplyScalar(up.dot(f)));
+  if(up.lengthSq()<1e-9){
+    const helper=(Math.abs(f.z)<0.9)? new THREE.Vector3(0,0,1): new THREE.Vector3(1,0,0);
+    up.copy(helper.sub(f.clone().multiplyScalar(helper.dot(f))));
+  }
+  up.normalize();
+  const right=up.clone().cross(f).normalize();
+  const realUp=f.clone().cross(right).normalize();
+  const m=new THREE.Matrix4().makeBasis(right,realUp,f);
+  const q=new THREE.Quaternion().setFromRotationMatrix(m);
+  return q;
 }
 
 /* big circle through two points (unit) */
@@ -360,14 +358,11 @@ const angVelBase=2.2;
 function resetToStartImmediate(rodAnchor){
   const start=new THREE.Vector3(0,0,1);
   noseMarker.position.copy(start);
-  // fixed-up aim, snap instantly
-  const q=aimQuatFixedUp(start.clone().sub(rodAnchor));
+  const q=aimQuatFixedUp(start.clone().sub(rodAnchor)); // roof up at start
   carAim.quaternion.copy(q);
   zeroRoll();
-  // reset state
   cfCurrent=null; bcCurrent=null; phase=0; phaseZero=0; lastPoint=null;
   lastUpWorld.set(0,1,0); lastFwdWorld.set(0,0,1);
-  // stake
   const pa=stake.geometry.getAttribute('position');
   pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z);
   pa.setXYZ(1,start.x,start.y,start.z);
@@ -385,14 +380,13 @@ function update(dt){
   const darActive = (darMode==='ARL' || darMode==='ARR');
   const rodAnchor=new THREE.Vector3(0,rodHeight,0);
 
-  // Idle guides
   function showIdleGuides(){
     drawGreatCircles(); setGreatOpacity(darActive);
     for(const rL of rings) rL.line.visible=true;
     if(darActive){ renderDarSet(darMode); }
   }
 
-  // Deadzone: snap every frame regardless of DAR mode
+  // Deadzone: always snap to start
   if(m<=DEADZONE+EPS){
     activeLine.visible=false;
     showIdleGuides();
@@ -401,7 +395,7 @@ function update(dt){
     drawStick(); return;
   }
 
-  /* DAR OFF — ring through stick dir and front; NO ROLL, fixed up */
+  /* DAR OFF — big circle; minimal-roll parallel transport for aiming (no flips) */
   if(!darActive){
     const stickDir=new THREE.Vector3(stickX,stickY,0); if(stickDir.lengthSq()<1e-10) stickDir.set(1,0,0);
     stickDir.normalize();
@@ -426,18 +420,18 @@ function update(dt){
 
     const pa=stake.geometry.getAttribute('position'); pa.setXYZ(0,rodAnchor.x,rodAnchor.y,rodAnchor.z); pa.setXYZ(1,noseTarget.x,noseTarget.y,noseTarget.z); pa.needsUpdate=true;
 
-    const fwd=noseTarget.clone().sub(rodAnchor);
-    const q=aimQuatFixedUp(fwd);                    // fixed world up => no roll
+    const fwd=noseTarget.clone().sub(rodAnchor).normalize();
+    const {q,realUp,newFwd}=aimQuatParallelTransport(fwd, lastFwdWorld, lastUpWorld); // minimal roll
     const lerp=1-Math.exp(-dt*12);
     carAim.quaternion.slerp(q, lerp);
-    zeroRoll();                                     // enforce
-    lastUpWorld.set(0,1,0); lastFwdWorld.copy(fwd.clone().normalize());
+    carSpin.quaternion.identity(); // no extra roll node when DAR OFF
+    lastUpWorld.copy(realUp); lastFwdWorld.copy(newFwd);
 
     carRoot.position.copy(rodAnchor); carOffset.position.y=carHeight-rodHeight;
     drawStick(); return;
   }
 
-  /* DAR ON — active DAR ring, roll allowed */
+  /* DAR ON — active DAR ring with roll */
   const aMin=THREE.MathUtils.degToRad(0.001), aMax=THREE.MathUtils.degToRad(endConeDeg);
   const alpha=THREE.MathUtils.lerp(aMin,aMax,m);
   let phi=Math.atan2(stickY,stickX);
